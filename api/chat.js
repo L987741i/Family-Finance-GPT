@@ -1,8 +1,18 @@
 import OpenAI from "openai";
 
-/**
- * Mapeamento de palavras-chave para categorização automática
- */
+function naturalMissingFieldMessage(missingField, extracted) {
+  switch (missingField) {
+    case "amount":
+      if (extracted.description)
+        return `Certo! E qual foi o valor de *${extracted.description}*? 😊`;
+      return "Perfeito! Pode me dizer o valor?";
+    case "description":
+      return "Legal! Qual foi a descrição dessa transação?";
+    default:
+      return "Pode me informar o que falta?";
+  }
+}
+
 const categoryMapping = [
   { regex: /(mercado|supermercado|padaria|ifood|almoço|restaurante|pizza|lanche)/i, category: "Alimentação" },
   { regex: /(uber|99|gasolina|combustível|estacionamento|pedágio)/i, category: "Transporte" },
@@ -12,9 +22,6 @@ const categoryMapping = [
   { regex: /(aluguel|iptu|financiamento|condomínio)/i, category: "Moradia" }
 ];
 
-/**
- * Detectar categoria por palavras-chave
- */
 function detectCategory(text) {
   for (const item of categoryMapping) {
     if (item.regex.test(text)) return item.category;
@@ -22,33 +29,21 @@ function detectCategory(text) {
   return null;
 }
 
-/**
- * Detecta parcelamento
- */
 function detectInstallments(text) {
   const match = text.match(/(\d+)[xX]/);
   return match ? parseInt(match[1], 10) : null;
 }
 
-/**
- * Detecta valor R$ 50, 50 reais, 120 etc.
- */
 function detectAmount(text) {
   const match = text.replace(",", ".").match(/(\d+(\.\d+)?)/);
   return match ? parseFloat(match[1]) : null;
 }
 
-/**
- * Detecta tipo de transação (income ou expense)
- */
 function detectType(text) {
   if (/recebi|ganhei|entrou|salário|caixa positivo/i.test(text)) return "income";
   return "expense";
 }
 
-/**
- * Detecta método de pagamento
- */
 function detectPaymentMethod(text) {
   if (/pix|débito|dinheiro|transfer/i.test(text)) return "account";
   if (/cartão/i.test(text) && detectInstallments(text)) return "credit_card_installments";
@@ -56,17 +51,11 @@ function detectPaymentMethod(text) {
   return "account";
 }
 
-/**
- * Detecta frequência (fixo x variável)
- */
 function detectFrequency(text) {
   if (/mensalidade|aluguel|plano|assinatura|fixo/i.test(text)) return "fixed";
   return "variable";
 }
 
-/**
- * Remove palavras irrelevantes da descrição
- */
 function extractDescription(text) {
   return text
     .replace(/\d+x?/gi, "")
@@ -79,31 +68,23 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Método não permitido" });
   }
 
-  const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-  });
-
   try {
-    const { message, history, context } = req.body;
+    const { message } = req.body;
 
     if (!message) {
-      return res.status(400).json({
-        reply: "Não consegui entender sua mensagem. Pode repetir?",
+      return res.status(200).json({
+        reply: "Opa! Pode me explicar o que você quer registrar? 😊",
         action: "error"
       });
     }
 
-    // Cancelamento
     if (/cancelar|cancela|esquece/i.test(message)) {
       return res.status(200).json({
-        reply: "Tudo bem, ação cancelada 👍",
+        reply: "Sem problema! Ação cancelada 👍",
         action: "cancelled"
       });
     }
 
-    /**
-     * 1. TENTAR EXTRAIR OS DADOS DA TRANSAÇÃO
-     */
     const extracted = {
       type: detectType(message),
       amount: detectAmount(message),
@@ -114,18 +95,16 @@ export default async function handler(req, res) {
       suggested_category_name: detectCategory(message)
     };
 
-    /**
-     * Campos obrigatórios
-     */
     const missingFields = [];
-
     if (!extracted.amount) missingFields.push("amount");
     if (!extracted.description || extracted.description.length < 2)
       missingFields.push("description");
 
     if (missingFields.length > 0) {
+      const msg = naturalMissingFieldMessage(missingFields[0], extracted);
+
       return res.status(200).json({
-        reply: `Estou quase lá! Falta: ${missingFields.join(", ")}. Pode me informar?`,
+        reply: msg,
         action: "need_more_info",
         data: {
           missing_fields: missingFields,
@@ -134,23 +113,17 @@ export default async function handler(req, res) {
       });
     }
 
-    /**
-     * 2. FORMAR MENSAGEM DE CONFIRMAÇÃO
-     */
     const confirmationText =
-      `🔎 *Confirme a transação*\n\n` +
-      `• Tipo: ${extracted.type === "income" ? "Receita" : "Despesa"}\n` +
-      `• Valor: R$ ${extracted.amount.toFixed(2)}\n` +
-      `• Descrição: ${extracted.description}\n` +
-      `• Categoria sugerida: ${extracted.suggested_category_name || "Não detectada"}\n` +
-      `• Pagamento: ${extracted.payment_method}\n` +
-      (extracted.installments ? `• Parcelas: ${extracted.installments}x\n` : "") +
-      `\nConfirma? (sim / não)`;
+      `Perfeito! Entendi que foi:\n\n` +
+      `• ${extracted.type === "income" ? "🟢 Receita" : "🔴 Despesa"}\n` +
+      `• 💰 R$ ${extracted.amount.toFixed(2)}\n` +
+      `• 📝 ${extracted.description}\n` +
+      `• 📁 Categoria: ${extracted.suggested_category_name || "Não detectada"}\n` +
+      `• 💳 Pagamento: ${extracted.payment_method}\n` +
+      (extracted.installments ? `• 🔢 Parcelado em ${extracted.installments}x\n` : "") +
+      `\nPosso registrar isso? (sim / não)`;
 
-    /**
-     * 3. Se usuário disse "sim", registrar
-     */
-    if (/^sim$|pode registrar|confirmo/i.test(message)) {
+    if (/^sim$|confirmo|pode registrar/i.test(message)) {
       return res.status(200).json({
         reply: "Prontinho! Lançamento registrado com sucesso 🎯",
         action: "success",
@@ -158,9 +131,6 @@ export default async function handler(req, res) {
       });
     }
 
-    /**
-     * 4. Caso contrário, mandar confirmação
-     */
     return res.status(200).json({
       reply: confirmationText,
       action: "awaiting_confirmation",
@@ -168,11 +138,11 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error("Erro na API ChatGPT:", error);
+    console.error("Erro na IA:", error);
+
     return res.status(500).json({
-      reply: "Ops! Tive um problema ao processar seu pedido.",
-      action: "error",
-      details: error.message
+      reply: "Poxa, aconteceu algo inesperado aqui 😕. Pode tentar novamente?",
+      action: "error"
     });
   }
 }
