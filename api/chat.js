@@ -1,5 +1,6 @@
 // /api/chat.js — IA Financeira + Lovable
-// Versão completa com edição durante confirmação
+// Versão evoluída 2025 — Inteligência aprimorada
+// Melhor interpretação de alterações + categoria inteligente
 // Compatível com Vercel Serverless (ESM)
 
 let globalContext = {};
@@ -61,46 +62,44 @@ export default async function handler(req, res) {
     }
 
     // ================================================================
-    // 1.5) EDIÇÃO DURANTE A CONFIRMAÇÃO
+    // 1.5) EDIÇÃO INTELIGENTE DURANTE A CONFIRMAÇÃO
     // ================================================================
     if (pending && !missing) {
       const updated = { ...pending };
 
-      // ALTERAR CATEGORIA
-      if (msgLower.includes("categoria")) {
-        const newCat = msgLower
-          .replace("categoria é", "")
-          .replace("categoria", "")
-          .trim();
+      // --- ALTERAR FREQUÊNCIA ---
+      if (["fixa", "fixo"].includes(msgLower)) {
+        updated.frequency = "fixed";
+        return sendConfirmation(res, updated);
+      }
 
+      if (["variável", "variavel"].includes(msgLower)) {
+        updated.frequency = "variable";
+        return sendConfirmation(res, updated);
+      }
+
+      // --- ALTERAR CATEGORIA ---
+      if (msgLower.startsWith("categoria")) {
+        const newCat = cleanEditWord(msgLower, "categoria");
         updated.category_name = newCat;
-
-        const confirmation = formatConfirmation(updated);
-        return res.status(200).json({
-          reply: confirmation,
-          action: "awaiting_confirmation",
-          data: updated
-        });
+        return sendConfirmation(res, updated);
       }
 
-      // ALTERAR CONTA
-      if (msgLower.includes("conta")) {
-        const newAcc = msgLower
-          .replace("conta é", "")
-          .replace("conta", "")
-          .trim();
-
+      // --- ALTERAR CONTA ---
+      if (msgLower.startsWith("conta")) {
+        const newAcc = cleanEditWord(msgLower, "conta");
         updated.account_name = newAcc;
-
-        const confirmation = formatConfirmation(updated);
-        return res.status(200).json({
-          reply: confirmation,
-          action: "awaiting_confirmation",
-          data: updated
-        });
+        return sendConfirmation(res, updated);
       }
 
-      // ALTERAR VALOR
+      // --- ALTERAR DESCRIÇÃO ---
+      if (msgLower.startsWith("descrição") || msgLower.startsWith("descricao")) {
+        const newDesc = cleanEditWord(msgLower, "descrição");
+        updated.description = newDesc;
+        return sendConfirmation(res, updated);
+      }
+
+      // --- ALTERAR VALOR ---
       if (msgLower.startsWith("valor")) {
         const num = Number(msgLower.replace("valor", "").replace("é", "").replace(",", ".").trim());
         if (!num || isNaN(num)) {
@@ -110,39 +109,13 @@ export default async function handler(req, res) {
             data: { missing_field: "amount", partial_data: updated }
           });
         }
-
         updated.amount = num;
-
-        const confirmation = formatConfirmation(updated);
-        return res.status(200).json({
-          reply: confirmation,
-          action: "awaiting_confirmation",
-          data: updated
-        });
-      }
-
-      // ALTERAR DESCRIÇÃO
-      if (msgLower.includes("descrição") || msgLower.includes("descricao")) {
-        const newDesc = msgLower
-          .replace("descrição é", "")
-          .replace("descricao é", "")
-          .replace("descrição", "")
-          .replace("descricao", "")
-          .trim();
-
-        updated.description = newDesc;
-
-        const confirmation = formatConfirmation(updated);
-        return res.status(200).json({
-          reply: confirmation,
-          action: "awaiting_confirmation",
-          data: updated
-        });
+        return sendConfirmation(res, updated);
       }
     }
 
     // ================================================================
-    // 2) DETECÇÃO DE INTENÇÃO
+    // 2) INTENÇÃO DO USUÁRIO
     // ================================================================
     const intent = detectIntent(msgLower);
 
@@ -210,13 +183,28 @@ export default async function handler(req, res) {
 
 //
 // ================================================================
-// INTENT DETECTION
+// FUNÇÕES AUXILIARES
 // ================================================================
 //
 
+function sendConfirmation(res, data) {
+  return res.status(200).json({
+    reply: formatConfirmation(data),
+    action: "awaiting_confirmation",
+    data
+  });
+}
+
+function cleanEditWord(msg, word) {
+  return msg
+    .replace(`${word} é`, "")
+    .replace(word, "")
+    .replace("é", "")
+    .trim();
+}
+
 function detectIntent(msg) {
   if (/^(cancelar|cancela|esquece)$/.test(msg)) return { type: "cancel" };
-
   if (/^(sim|pode|ok|confirmo)$/.test(msg)) return { type: "confirm" };
 
   if (/quanto gastei hoje/.test(msg))
@@ -267,7 +255,7 @@ function extractTransaction(msg) {
   const description = inferDescription(msg);
 
   const account = inferWallet(description, wallets);
-  const category = inferCategory(description, categories);
+  let category = inferCategory(description, categories);
 
   const partial = {
     type,
@@ -327,6 +315,77 @@ function extractTransaction(msg) {
 
 //
 // ================================================================
+// INTELIGÊNCIA DE CATEGORIAS
+// ================================================================
+//
+
+function inferCategory(desc, categories) {
+  if (!categories || categories.length === 0) return null;
+
+  const text = desc.toLowerCase();
+
+  // --- 1) MATCH DIRETO ---
+  const direct = categories.find(c => text.includes(c.name.toLowerCase()));
+  if (direct) return direct.name;
+
+  // --- 2) MAPA DE PALAVRAS ROBUSTO ---
+  const categoryMap = [
+    { words: ["aluguel", "renda", "moradia"], cat: "Aluguel" },
+    { words: ["condomínio", "condominio"], cat: "Condomínio" },
+    { words: ["iptu"], cat: "IPTU" },
+    { words: ["supermercado", "mercado"], cat: "Supermercado" },
+    { words: ["padaria", "pão"], cat: "Padaria" },
+    { words: ["delivery", "ifood", "lanche"], cat: "Delivery" },
+    { words: ["gasolina", "combustível"], cat: "Combustível" },
+    { words: ["uber", "99"], cat: "Uber / 99" },
+    { words: ["energia", "luz"], cat: "Energia" },
+    { words: ["internet", "wifi"], cat: "Internet" },
+    { words: ["psicólogo", "terapia"], cat: "Psicólogo / Terapia" },
+    { words: ["farmácia", "remédio"], cat: "Farmácia" },
+    { words: ["dentista"], cat: "Dentista" },
+    { words: ["curso", "escola", "mensalidade"], cat: "Educação" },
+    { words: ["roupa", "camisa", "vestido"], cat: "Roupas" },
+    { words: ["calçado", "tênis"], cat: "Calçados" },
+    { words: ["petshop", "ração"], cat: "Ração / Petshop" },
+    { words: ["dízimo", "oferta"], cat: "Dízimo" },
+    { words: ["salário"], cat: "Salário" },
+    { words: ["freela", "extra"], cat: "Extra" }
+  ];
+
+  for (const g of categoryMap) {
+    if (g.words.some(w => text.includes(w))) {
+      const found = categories.find(c =>
+        c.name.toLowerCase() === g.cat.toLowerCase()
+      );
+      if (found) return found.name;
+    }
+  }
+
+  // --- 3) CASOS AMBÍGUOS ---
+  const ambiguous = [
+    {
+      options: ["Descartáveis", "Produtos de Limpeza"],
+      trigger: ["sacola", "copos", "panos", "esponja"]
+    }
+  ];
+
+  for (const a of ambiguous) {
+    if (a.trigger.some(w => text.includes(w))) {
+      return {
+        needsMoreInfo: true,
+        missingField: "category_name",
+        reply: `A categoria desse lançamento é: *${a.options[0]}* ou *${a.options[1]}*?`,
+        partial
+      };
+    }
+  }
+
+  // fallback
+  return categories.find(c => c.type === "expense")?.name || null;
+}
+
+//
+// ================================================================
 // CONFIRMAÇÃO FORMATADA
 // ================================================================
 //
@@ -338,9 +397,10 @@ function formatConfirmation(data) {
 
   const amount = Number(data.amount);
   const emoji = data.type === "expense" ? "🔴 Despesa" : "🟢 Receita";
+  const freq = data.frequency === "fixed" ? "Fixa" : "Variável";
   const today = new Date().toLocaleDateString("pt-BR");
 
-  return `${emoji} | 📅 Variável
+  return `${emoji} | 📅 ${freq}
 💰 Valor: R$ ${amount.toFixed(2)}
 📝 Descrição: ${data.description}
 💳 Conta: ${data.account_name}
@@ -352,7 +412,7 @@ Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
 
 //
 // ================================================================
-// HELPERS
+// AJUDANTES
 // ================================================================
 //
 
@@ -366,34 +426,4 @@ function inferDescription(msg) {
 function inferWallet(desc, wallets) {
   const d = desc.toLowerCase();
   return wallets.find(w => d.includes(w.name.toLowerCase()))?.name || null;
-}
-
-function inferCategory(desc, categories) {
-  if (!categories || categories.length === 0) return null;
-
-  const text = desc.toLowerCase();
-
-  // MATCH DIRETO
-  const direct = categories.find(c => text.includes(c.name.toLowerCase()));
-  if (direct) return direct.name;
-
-  // MAPA DE PALAVRAS-CHAVE
-  const map = [
-    { words: ["pão", "lanche", "comida", "almoço", "mercado"], cat: "Alimentação" },
-    { words: ["uber", "gasolina", "combustível"], cat: "Transporte" },
-    { words: ["luz", "água", "internet", "telefone"], cat: "Contas Essenciais" },
-    { words: ["remédio", "farmácia"], cat: "Saúde" },
-    { words: ["roupa", "camisa", "sapato"], cat: "Vestuário" },
-    { words: ["curso", "escola"], cat: "Educação" }
-  ];
-
-  for (const g of map) {
-    if (g.words.some(w => text.includes(w))) {
-      const found = categories.find(c => c.name.toLowerCase() === g.cat.toLowerCase());
-      if (found) return found.name;
-    }
-  }
-
-  // fallback
-  return categories.find(c => c.type === "expense")?.name || null;
 }
