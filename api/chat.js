@@ -1,6 +1,6 @@
-// /api/chat.js — IA Financeira integrada ao Lovable
-// Versão com categorização automática baseada nas categorias do usuário
-// Compatível com Vercel (ESM)
+// /api/chat.js — IA Financeira + Lovable
+// Versão completa com edição durante confirmação
+// Compatível com Vercel Serverless (ESM)
 
 let globalContext = {};
 
@@ -11,21 +11,23 @@ export default async function handler(req, res) {
 
   try {
     const { message, context } = req.body || {};
-    globalContext = context || {};
 
+    globalContext = context || {};
     const pending = context?.pending_transaction || null;
     const missing = context?.missing_field || null;
 
     if (!message) {
       return res.status(200).json({
-        reply: "Não entendi muito bem 🤔\nPode repetir?",
+        reply: "Não entendi 🤔 pode repetir?",
         action: "message"
       });
     }
 
-    // ======================================================
-    // 1) CONTINUAÇÃO (quando falta campo)
-    // ======================================================
+    const msgLower = message.toLowerCase().trim();
+
+    // ================================================================
+    // 1) CONTINUAÇÃO DE CAMPO FALTANTE
+    // ================================================================
     if (pending && missing) {
       const updated = { ...pending };
 
@@ -33,23 +35,20 @@ export default async function handler(req, res) {
         const parsed = Number(message.replace(",", "."));
         if (!parsed || isNaN(parsed)) {
           return res.status(200).json({
-            reply: "Informe um valor numérico válido 💰",
+            reply: "Me diga um valor válido 💰",
             action: "need_more_info",
-            data: {
-              missing_field: "amount",
-              partial_data: updated
-            }
+            data: { missing_field: "amount", partial_data: updated }
           });
         }
         updated.amount = parsed;
       }
 
       if (missing === "account_name") {
-        updated.account_name = message.trim().toLowerCase();
+        updated.account_name = msgLower;
       }
 
       if (missing === "category_name") {
-        updated.category_name = message.trim().toLowerCase();
+        updated.category_name = msgLower;
       }
 
       const confirmation = formatConfirmation(updated);
@@ -61,15 +60,95 @@ export default async function handler(req, res) {
       });
     }
 
-    // ======================================================
-    // 2) DETECTAR INTENÇÃO
-    // ======================================================
+    // ================================================================
+    // 1.5) EDIÇÃO DURANTE A CONFIRMAÇÃO
+    // ================================================================
+    if (pending && !missing) {
+      const updated = { ...pending };
 
-    const intent = detectIntent(message);
+      // ALTERAR CATEGORIA
+      if (msgLower.includes("categoria")) {
+        const newCat = msgLower
+          .replace("categoria é", "")
+          .replace("categoria", "")
+          .trim();
+
+        updated.category_name = newCat;
+
+        const confirmation = formatConfirmation(updated);
+        return res.status(200).json({
+          reply: confirmation,
+          action: "awaiting_confirmation",
+          data: updated
+        });
+      }
+
+      // ALTERAR CONTA
+      if (msgLower.includes("conta")) {
+        const newAcc = msgLower
+          .replace("conta é", "")
+          .replace("conta", "")
+          .trim();
+
+        updated.account_name = newAcc;
+
+        const confirmation = formatConfirmation(updated);
+        return res.status(200).json({
+          reply: confirmation,
+          action: "awaiting_confirmation",
+          data: updated
+        });
+      }
+
+      // ALTERAR VALOR
+      if (msgLower.startsWith("valor")) {
+        const num = Number(msgLower.replace("valor", "").replace("é", "").replace(",", ".").trim());
+        if (!num || isNaN(num)) {
+          return res.status(200).json({
+            reply: "Informe um valor válido 💰",
+            action: "need_more_info",
+            data: { missing_field: "amount", partial_data: updated }
+          });
+        }
+
+        updated.amount = num;
+
+        const confirmation = formatConfirmation(updated);
+        return res.status(200).json({
+          reply: confirmation,
+          action: "awaiting_confirmation",
+          data: updated
+        });
+      }
+
+      // ALTERAR DESCRIÇÃO
+      if (msgLower.includes("descrição") || msgLower.includes("descricao")) {
+        const newDesc = msgLower
+          .replace("descrição é", "")
+          .replace("descricao é", "")
+          .replace("descrição", "")
+          .replace("descricao", "")
+          .trim();
+
+        updated.description = newDesc;
+
+        const confirmation = formatConfirmation(updated);
+        return res.status(200).json({
+          reply: confirmation,
+          action: "awaiting_confirmation",
+          data: updated
+        });
+      }
+    }
+
+    // ================================================================
+    // 2) DETECÇÃO DE INTENÇÃO
+    // ================================================================
+    const intent = detectIntent(msgLower);
 
     if (intent.type === "cancel") {
       return res.status(200).json({
-        reply: "Tudo certo 👍 Operação cancelada!",
+        reply: "Tudo certo 👍 operação cancelada!",
         action: "cancelled"
       });
     }
@@ -97,10 +176,10 @@ export default async function handler(req, res) {
       });
     }
 
-    // ======================================================
+    // ================================================================
     // 3) NOVA TRANSAÇÃO
-    // ======================================================
-    const parsed = extractTransaction(message);
+    // ================================================================
+    const parsed = extractTransaction(msgLower);
 
     if (parsed.needsMoreInfo) {
       return res.status(200).json({
@@ -119,83 +198,59 @@ export default async function handler(req, res) {
       data: parsed.fullData
     });
 
-  } catch (error) {
-    console.error("Erro na IA:", error);
+  } catch (err) {
+    console.error("Erro:", err);
     return res.status(500).json({
-      reply: "Tive um problema inesperado 😕 Tente novamente.",
+      reply: "Ops! Tive um problema 😕 tente novamente.",
       action: "error",
-      details: String(error)
+      details: String(err)
     });
   }
 }
 
 //
-// ======================================================
-// DETECÇÃO DE INTENÇÃO
-// ======================================================
+// ================================================================
+// INTENT DETECTION
+// ================================================================
 //
 
 function detectIntent(msg) {
-  msg = msg.toLowerCase().trim();
+  if (/^(cancelar|cancela|esquece)$/.test(msg)) return { type: "cancel" };
 
-  if (/^(cancelar|cancela|esquece|deixa pra lá)$/.test(msg)) {
-    return { type: "cancel" };
-  }
+  if (/^(sim|pode|ok|confirmo)$/.test(msg)) return { type: "confirm" };
 
-  if (/^(sim|pode|ok|confirmo)$/.test(msg)) {
-    return { type: "confirm" };
-  }
+  if (/quanto gastei hoje/.test(msg))
+    return { type: "query", action: "query_spent_today", reply: "Verificando seus gastos de hoje 💸" };
 
-  if (/quanto gastei hoje/.test(msg)) {
-    return {
-      type: "query",
-      action: "query_spent_today",
-      reply: "Vou verificar seus gastos de hoje 💸"
-    };
-  }
-
-  if (/gastei na semana/.test(msg)) {
-    return {
-      type: "query",
-      action: "query_spent_week",
-      reply: "Vou conferir sua semana financeira 📅"
-    };
-  }
+  if (/gastei na semana/.test(msg))
+    return { type: "query", action: "query_spent_week", reply: "Analisando seus gastos da semana 📅" };
 
   if (/gastei no mês/.test(msg)) {
     const now = new Date();
     return {
       type: "query",
       action: "query_spent_month",
-      reply: "Consultando gastos do mês 📊",
+      reply: "Conferindo seu mês financeiro 📊",
       data: { month: now.getMonth() + 1, year: now.getFullYear() }
     };
   }
 
-  if (/saldo/.test(msg)) {
-    return {
-      type: "query",
-      action: "query_balance",
-      reply: "Calculando seu saldo geral 💼"
-    };
-  }
+  if (/saldo/.test(msg))
+    return { type: "query", action: "query_balance", reply: "Calculando seu saldo geral 💼" };
 
-  if (/(paguei|gastei|comprei|recebi|ganhei|entrou)/.test(msg)) {
+  if (/(paguei|gastei|comprei|recebi|ganhei|entrou)/.test(msg))
     return { type: "transaction" };
-  }
 
   return { type: "general" };
 }
 
 //
-// ======================================================
-// PROCESSAMENTO DE TRANSAÇÕES
-// ======================================================
+// ================================================================
+// PROCESSAMENTO DA TRANSAÇÃO
+// ================================================================
 //
 
-function extractTransaction(message) {
-  const msg = message.toLowerCase();
-
+function extractTransaction(msg) {
   const wallets = globalContext.wallets || [];
   const categories = globalContext.categories || [];
 
@@ -246,7 +301,7 @@ function extractTransaction(message) {
     return {
       needsMoreInfo: true,
       missingField: "account_name",
-      reply: `Só mais uma coisa 😉 Qual conta você usou?\n\nContas disponíveis:\n${list}`,
+      reply: `Só mais uma coisa 😉 Qual conta você usou?\n\n${list}`,
       partial
     };
   }
@@ -261,7 +316,7 @@ function extractTransaction(message) {
     };
   }
 
-  const fullData = partial;
+  const fullData = { ...partial };
 
   return {
     needsMoreInfo: false,
@@ -271,34 +326,34 @@ function extractTransaction(message) {
 }
 
 //
-// ======================================================
-// FORMATAÇÃO DA CONFIRMAÇÃO
-// ======================================================
+// ================================================================
+// CONFIRMAÇÃO FORMATADA
+// ================================================================
 //
 
 function formatConfirmation(data) {
   if (!data.amount || isNaN(Number(data.amount))) {
-    return `Só mais uma coisa 😉\nQual é o *valor* do lançamento?\n\nExemplos: 20, 35.90, 120`;
+    return `Me diga o valor desse lançamento 💰\nExemplo: 20, 35.90, 120`;
   }
 
   const amount = Number(data.amount);
-  const emoji = data.type === "expense" ? "🔴 *Despesa*" : "🟢 *Receita*";
+  const emoji = data.type === "expense" ? "🔴 Despesa" : "🟢 Receita";
   const today = new Date().toLocaleDateString("pt-BR");
 
   return `${emoji} | 📅 Variável
-💰 *Valor*: R$ ${amount.toFixed(2)}
-📝 *Descrição*: ${data.description}
-💳 *Conta*: ${data.account_name}
-📁 *Categoria*: ${data.category_name}
+💰 Valor: R$ ${amount.toFixed(2)}
+📝 Descrição: ${data.description}
+💳 Conta: ${data.account_name}
+📁 Categoria: ${data.category_name}
 _${today}_
 
 Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
 }
 
 //
-// ======================================================
-// HELPERS: DESCRIÇÃO / CONTA / CATEGORIA
-// ======================================================
+// ================================================================
+// HELPERS
+// ================================================================
 //
 
 function inferDescription(msg) {
@@ -313,41 +368,32 @@ function inferWallet(desc, wallets) {
   return wallets.find(w => d.includes(w.name.toLowerCase()))?.name || null;
 }
 
-/**
- * INFERÊNCIA DE CATEGORIA — versão inteligente
- * Usa:
- * 1) correspondência direta
- * 2) palavras-chave mapeadas
- * 3) fallback por similaridade parcial
- */
 function inferCategory(desc, categories) {
   if (!categories || categories.length === 0) return null;
 
   const text = desc.toLowerCase();
 
-  // 1) MATCH DIRETO
+  // MATCH DIRETO
   const direct = categories.find(c => text.includes(c.name.toLowerCase()));
   if (direct) return direct.name;
 
-  // 2) PALAVRAS-CHAVE → CATEGORIA
-  const keywordMap = [
-    { words: ["pão", "lanche", "comida", "almoço", "jantar", "feira", "mercado"], cat: "Alimentação" },
-    { words: ["uber", "ônibus", "gasolina", "combustível"], cat: "Transporte" },
+  // MAPA DE PALAVRAS-CHAVE
+  const map = [
+    { words: ["pão", "lanche", "comida", "almoço", "mercado"], cat: "Alimentação" },
+    { words: ["uber", "gasolina", "combustível"], cat: "Transporte" },
     { words: ["luz", "água", "internet", "telefone"], cat: "Contas Essenciais" },
-    { words: ["remédio", "farmácia", "dor"], cat: "Saúde" },
+    { words: ["remédio", "farmácia"], cat: "Saúde" },
     { words: ["roupa", "camisa", "sapato"], cat: "Vestuário" },
-    { words: ["curso", "escola", "apostila"], cat: "Educação" },
-    { words: ["cinema", "viagem", "lazer"], cat: "Lazer" }
+    { words: ["curso", "escola"], cat: "Educação" }
   ];
 
-  for (const group of keywordMap) {
-    if (group.words.some(w => text.includes(w))) {
-      const found = categories.find(c => c.name.toLowerCase() === group.cat.toLowerCase());
+  for (const g of map) {
+    if (g.words.some(w => text.includes(w))) {
+      const found = categories.find(c => c.name.toLowerCase() === g.cat.toLowerCase());
       if (found) return found.name;
     }
   }
 
-  // 3) FALLBACK → pega primeira categoria do tipo "expense"
-  const fallback = categories.find(c => c.type === "expense");
-  return fallback ? fallback.name : null;
+  // fallback
+  return categories.find(c => c.type === "expense")?.name || null;
 }
