@@ -322,12 +322,110 @@ function detectIntent(msg) {
 // PROCESSAMENTO DA TRANSAÇÃO
 // ======================================================================
 function extractTransaction(msg) {
+  const wallets = globalContext.wallets || [];
+  const categories = globalContext.categories || [];
+
+  // Detectar tipo da transação
+  const type =
+    /(recebi|ganhei|entrou)/.test(msg)
+      ? "income"
+      : /(paguei|gastei|comprei|custou|transferi|enviei)/.test(msg)
+      ? "expense"
+      : null;
+
+  // Detectar valor
+  const amountMatch = msg.match(/(\d+[.,]?\d*)/);
+  const amount = amountMatch ? Number(amountMatch[1].replace(",", ".")) : null;
+
+  // Criar descrição automaticamente
+  const description = inferDescription(msg);
+
+  // Tentar identificar conta e categoria
+  const account = inferWallet(description, wallets);
+  const { category, suggestions } = guessCategory(description, categories);
+
+  // Construir objeto parcial
+  const partial = {
+    type,
+    amount,
+    description,
+    account_name: account,
+    category_name: category,
+    frequency: "variable"
+  };
+
+  // ------------------------------
+  // Faltou VALOR
+  // ------------------------------
+  if (!amount) {
+    return {
+      needsMoreInfo: true,
+      missingField: "amount",
+      reply: `Qual foi o valor de *${description}*? 💰`,
+      partial
+    };
+  }
+
+  // ------------------------------
+  // Faltou tipo (não sei se é despesa ou receita)
+  // ------------------------------
+  if (!type) {
+    return {
+      needsMoreInfo: true,
+      missingField: "type",
+      reply: `Isso foi *entrada* ou *saída*?`,
+      partial
+    };
+  }
+
+  // ------------------------------
+  // Faltou conta
+  // ------------------------------
+  if (!account) {
+    const list = wallets.map(w => `• ${w.name}`).join("\n");
+    return {
+      needsMoreInfo: true,
+      missingField: "account_name",
+      reply: `Certo! Agora me diga de qual conta saiu ou entrou:\n\n${list}`,
+      partial
+    };
+  }
+
+  // ------------------------------
+  // Faltou categoria
+  // ------------------------------
+  if (!category) {
+    // Se houver sugestões, pergunta entre elas
+    if (suggestions && suggestions.length >= 2) {
+      return {
+        needsMoreInfo: true,
+        missingField: "category_name",
+        reply: `A categoria desse lançamento é *${suggestions[0]}* ou *${suggestions[1]}*?`,
+        partial
+      };
+    }
+
+    const list = categories.map(c => `• ${c.name}`).join("\n");
+    return {
+      needsMoreInfo: true,
+      missingField: "category_name",
+      reply: `Escolha uma categoria:\n\n${list}`,
+      partial
+    };
+  }
+
+  // ------------------------------
+  // Tudo OK → Transação completa!
+  // ------------------------------
+  const fullData = { ...partial };
+
   return {
     needsMoreInfo: false,
-    confirmation: "⚠️ O módulo de transação deve ser reativado aqui...",
-    fullData: {}
+    fullData,
+    confirmation: formatConfirmation(fullData)
   };
 }
+
 
 //
 // ======================================================================
