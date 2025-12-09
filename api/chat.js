@@ -1,6 +1,5 @@
 // /api/chat.js — IA Financeira + Lovable
-// Versão inteligente, corrigida e otimizada – 2025
-// Fluxo com interpretação semântica e apenas 1 bloco de edição durante confirmação
+// Versão 2025 — Revisada, inteligente e estável
 
 let globalContext = {};
 
@@ -16,7 +15,7 @@ export default async function handler(req, res) {
     const pending = context?.pending_transaction || null;
     const missing = context?.missing_field || null;
 
-    if (!message) {
+    if (!message || typeof message !== "string") {
       return res.status(200).json({
         reply: "Não entendi 🤔 pode repetir?",
         action: "message"
@@ -26,7 +25,7 @@ export default async function handler(req, res) {
     const msgLower = message.toLowerCase().trim();
 
     // ======================================================================
-    // 1) CONTINUAÇÃO DE CAMPO FALTANTE
+    // 1) CONTINUAÇÃO DE CAMPO FALTANTE (quando a IA pediu algo específico)
     // ======================================================================
     if (pending && missing) {
       const updated = { ...pending };
@@ -51,27 +50,45 @@ export default async function handler(req, res) {
         updated.category_name = msgLower;
       }
 
+      if (missing === "type") {
+        // entrada / saída
+        if (msgLower.includes("entrada") || msgLower.includes("receita")) {
+          updated.type = "income";
+        } else if (
+          msgLower.includes("saída") ||
+          msgLower.includes("saida") ||
+          msgLower.includes("despesa")
+        ) {
+          updated.type = "expense";
+        } else {
+          return res.status(200).json({
+            reply: "Isso foi *entrada* ou *saída*? 🤔",
+            action: "need_more_info",
+            data: { missing_field: "type", partial_data: updated }
+          });
+        }
+      }
+
       return sendConfirmation(res, updated);
     }
 
     // ======================================================================
     // 2) EDIÇÃO INTELIGENTE DURANTE A CONFIRMAÇÃO
-    // (ÚNICO BLOCO — BUG DE DUPLICAÇÃO CORRIGIDO)
+    // (APENAS 1 BLOCO, SEM DUPLICAÇÃO)
     // ======================================================================
     if (pending && !missing) {
       const updated = { ...pending };
       const text = msgLower;
 
       // ---------------------------------------------------------------
-      // (A) FREQUÊNCIA — interpreta curta e frases longas
+      // (A) FREQUÊNCIA — fixa / variável (frases curtas e longas)
       // ---------------------------------------------------------------
       const isFreqFixa =
         text === "fixa" ||
         text === "fixo" ||
         text.includes("é fixa") ||
         text.includes("frequência fixa") ||
-        text.includes("frequencia fixa") ||
-        text.includes("fix");
+        text.includes("frequencia fixa");
 
       const isFreqVariavel =
         text === "variável" ||
@@ -79,7 +96,7 @@ export default async function handler(req, res) {
         text.includes("é variável") ||
         text.includes("é variavel") ||
         text.includes("frequencia variavel") ||
-        text.includes("freq variavel");
+        text.includes("frequência variável");
 
       if (isFreqFixa) {
         updated.frequency = "fixed";
@@ -92,13 +109,13 @@ export default async function handler(req, res) {
       }
 
       // ---------------------------------------------------------------
-      // (B) CATEGORIA — interpreta semântica completa
+      // (B) MUDAR CATEGORIA — semântica
       // ---------------------------------------------------------------
       if (
         text.startsWith("categoria") ||
         text.includes("categoria é") ||
-        text.includes("troca categoria") ||
         text.includes("muda categoria") ||
+        text.includes("troca categoria") ||
         text.includes("coloca categoria") ||
         text.includes("pra categoria")
       ) {
@@ -129,48 +146,53 @@ export default async function handler(req, res) {
       }
 
       // ---------------------------------------------------------------
-      // (C) CONTA — só ativa se for realmente pedido
+      // (C) MUDAR CONTA
       // ---------------------------------------------------------------
       if (
         text.startsWith("conta") ||
         text.includes("troca conta") ||
         text.includes("muda conta") ||
         text.includes("usa conta") ||
-        text.includes("é na conta") ||
-        text.includes("é na") ||
-        text.includes("coloca na conta")
+        text.includes("coloca na conta") ||
+        text.includes("é na conta")
       ) {
         const newAcc = text
           .replace("conta", "")
-          .replace("é", "")
-          .replace("na", "")
           .replace("troca", "")
           .replace("muda", "")
+          .replace("usa", "")
+          .replace("coloca", "")
+          .replace("na conta", "")
+          .replace("é", "")
           .trim();
 
-        if (newAcc.length > 0) {
+        if (newAcc) {
           updated.account_name = newAcc;
           return sendConfirmation(res, updated);
         }
       }
 
-      // Se o nome da carteira bater com algum wallet
-      if (globalContext.wallets?.some(w => text.includes(w.name.toLowerCase()))) {
+      // Se bater com uma carteira existente pelo nome
+      if (globalContext.wallets && Array.isArray(globalContext.wallets)) {
         const wallet = globalContext.wallets.find(w =>
-          text.includes(w.name.toLowerCase())
+          text.includes(String(w.name).toLowerCase())
         );
-        updated.account_name = wallet.name;
-        return sendConfirmation(res, updated);
+        if (wallet) {
+          updated.account_name = wallet.name;
+          return sendConfirmation(res, updated);
+        }
       }
 
       // ---------------------------------------------------------------
-      // (D) DESCRIÇÃO
+      // (D) MUDAR DESCRIÇÃO
       // ---------------------------------------------------------------
       if (
         text.startsWith("descrição") ||
         text.startsWith("descricao") ||
         text.includes("muda descrição") ||
-        text.includes("troca descrição")
+        text.includes("muda descricao") ||
+        text.includes("troca descrição") ||
+        text.includes("troca descricao")
       ) {
         const newDesc = text
           .replace("descrição", "")
@@ -187,12 +209,12 @@ export default async function handler(req, res) {
       }
 
       // ---------------------------------------------------------------
-      // (E) VALOR — interpreta números sozinhos
+      // (E) MUDAR VALOR
       // ---------------------------------------------------------------
       const numberRegex = /^[0-9]+([.,][0-9]+)?$/;
       if (numberRegex.test(text) || text.includes("valor")) {
-        const rawValue = text.replace("valor", "").replace("é", "").trim();
-        const n = Number(rawValue.replace(",", "."));
+        const raw = text.replace("valor", "").replace("é", "").trim();
+        const n = Number(raw.replace(",", "."));
 
         if (!isNaN(n) && n > 0) {
           updated.amount = n;
@@ -200,17 +222,16 @@ export default async function handler(req, res) {
         }
 
         return res.status(200).json({
-          reply: "Me informe um valor válido 💰",
+          reply: "Informe um valor válido 💰",
           action: "need_more_info",
           data: { missing_field: "amount", partial_data: updated }
         });
       }
-
-      // continua para intents normais
+      // se não for edição, segue o fluxo para intenção (sim, cancelar, etc.)
     }
 
     // ======================================================================
-    // 3) INTENÇÃO DO USUÁRIO
+    // 3) INTENÇÃO DO USUÁRIO (confirmar, cancelar, consultas, etc.)
     // ======================================================================
     const intent = detectIntent(msgLower);
 
@@ -267,11 +288,10 @@ export default async function handler(req, res) {
     });
 
   } catch (err) {
-    console.error("Erro:", err);
+    console.error("Erro na IA Financeira:", err);
     return res.status(500).json({
-      reply: "Ops! Eu tive um problema 😕",
-      action: "error",
-      details: String(err)
+      reply: "Ops! Tive um problema técnico 😕 Tenta de novo em instantes.",
+      action: "error"
     });
   }
 }
@@ -280,6 +300,7 @@ export default async function handler(req, res) {
 // ======================================================================
 // FUNÇÕES AUXILIARES
 // ======================================================================
+
 function sendConfirmation(res, data) {
   return res.status(200).json({
     reply: formatConfirmation(data),
@@ -311,7 +332,7 @@ function detectIntent(msg) {
   if (/saldo/.test(msg))
     return { type: "query", action: "query_balance", reply: "Calculando seu saldo geral 💼" };
 
-  if (/(paguei|gastei|comprei|recebi|ganhei|entrou)/.test(msg))
+  if (/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/.test(msg))
     return { type: "transaction" };
 
   return { type: "general" };
@@ -321,11 +342,11 @@ function detectIntent(msg) {
 // ======================================================================
 // PROCESSAMENTO DA TRANSAÇÃO
 // ======================================================================
+
 function extractTransaction(msg) {
   const wallets = globalContext.wallets || [];
   const categories = globalContext.categories || [];
 
-  // Detectar tipo da transação
   const type =
     /(recebi|ganhei|entrou)/.test(msg)
       ? "income"
@@ -333,18 +354,14 @@ function extractTransaction(msg) {
       ? "expense"
       : null;
 
-  // Detectar valor
   const amountMatch = msg.match(/(\d+[.,]?\d*)/);
   const amount = amountMatch ? Number(amountMatch[1].replace(",", ".")) : null;
 
-  // Criar descrição automaticamente
   const description = inferDescription(msg);
 
-  // Tentar identificar conta e categoria
   const account = inferWallet(description, wallets);
   const { category, suggestions } = guessCategory(description, categories);
 
-  // Construir objeto parcial
   const partial = {
     type,
     amount,
@@ -354,9 +371,6 @@ function extractTransaction(msg) {
     frequency: "variable"
   };
 
-  // ------------------------------
-  // Faltou VALOR
-  // ------------------------------
   if (!amount) {
     return {
       needsMoreInfo: true,
@@ -366,21 +380,15 @@ function extractTransaction(msg) {
     };
   }
 
-  // ------------------------------
-  // Faltou tipo (não sei se é despesa ou receita)
-  // ------------------------------
   if (!type) {
     return {
       needsMoreInfo: true,
       missingField: "type",
-      reply: `Isso foi *entrada* ou *saída*?`,
+      reply: "Isso foi *entrada* ou *saída*? 🤔",
       partial
     };
   }
 
-  // ------------------------------
-  // Faltou conta
-  // ------------------------------
   if (!account) {
     const list = wallets.map(w => `• ${w.name}`).join("\n");
     return {
@@ -391,11 +399,7 @@ function extractTransaction(msg) {
     };
   }
 
-  // ------------------------------
-  // Faltou categoria
-  // ------------------------------
   if (!category) {
-    // Se houver sugestões, pergunta entre elas
     if (suggestions && suggestions.length >= 2) {
       return {
         needsMoreInfo: true,
@@ -414,9 +418,6 @@ function extractTransaction(msg) {
     };
   }
 
-  // ------------------------------
-  // Tudo OK → Transação completa!
-  // ------------------------------
   const fullData = { ...partial };
 
   return {
@@ -426,23 +427,126 @@ function extractTransaction(msg) {
   };
 }
 
+//
+// ======================================================================
+// INTELIGÊNCIA DE CATEGORIAS
+// ======================================================================
+
+function guessCategory(desc, categories) {
+  if (!categories || categories.length === 0) {
+    return { category: null, suggestions: [] };
+  }
+
+  const text = desc.toLowerCase();
+
+  // 1) Match direto com nome exato de categoria
+  const direct = categories.find(c =>
+    text.includes(String(c.name).toLowerCase())
+  );
+  if (direct) return { category: direct.name, suggestions: [] };
+
+  // 2) Mapa de palavras-chave → categorias
+  const map = [
+    { cat: "Aluguel", words: ["aluguel", "aluguel da casa", "aluguer"] },
+    { cat: "Condomínio", words: ["condomínio", "condominio"] },
+    { cat: "IPTU", words: ["iptu"] },
+
+    { cat: "Supermercado", words: ["mercado", "supermercado", "compra do mês", "compras do mes"] },
+    { cat: "Padaria", words: ["padaria", "pão", "pao"] },
+    { cat: "Delivery", words: ["ifood", "delivery", "lanche", "lanchinho", "restaurante"] },
+
+    { cat: "Combustível", words: ["gasolina", "combustível", "combustivel", "etanol"] },
+    { cat: "Ônibus / Trem / Metrô", words: ["ônibus", "onibus", "trem", "metrô", "metro", "passagem"] },
+    { cat: "Uber / 99", words: ["uber", "99", "corrida"] },
+
+    { cat: "Energia", words: ["energia", "luz", "eletricidade"] },
+    { cat: "Água", words: ["água", "agua", "conta de agua"] },
+    { cat: "Gás", words: ["gás", "gas", "botijão"] },
+    { cat: "Internet", words: ["internet", "wifi"] },
+    { cat: "Plano de celular", words: ["plano de celular", "recarga", "telefone"] },
+    { cat: "Streaming (Netflix, Prime, etc.)", words: ["netflix", "prime video", "disney", "spotify"] },
+
+    { cat: "Farmácia", words: ["farmácia", "farmacia", "remédio", "remedio"] },
+    { cat: "Psicólogo / Terapia", words: ["psicólogo", "psicologo", "terapia", "terapeuta"] },
+    { cat: "Dentista", words: ["dentista"] },
+
+    { cat: "Educação", words: ["escola", "mensalidade escolar", "faculdade", "curso", "material escolar"] },
+    { cat: "Academia / Esportes", words: ["academia", "musculação", "treino", "esporte"] },
+
+    { cat: "Roupas", words: ["roupa", "camisa", "calça", "calca", "vestido", "blusa"] },
+    { cat: "Calçados", words: ["tênis", "tenis", "sapato", "sandália", "sandalia"] },
+
+    { cat: "Dízimo", words: ["dízimo", "dizimo"] },
+    { cat: "Oferta", words: ["oferta", "ofertinha"] },
+
+    { cat: "Ração", words: ["ração", "racao"] },
+    { cat: "Petshop", words: ["petshop", "banho e tosa"] },
+
+    // Entradas
+    { cat: "Salário", words: ["salário", "salario", "meu salário", "meu salario"] },
+    { cat: "Extra", words: ["extra", "bico", "freelancer", "freela"] },
+    { cat: "Venda", words: ["venda", "vendi"] },
+    { cat: "Empréstimo", words: ["empréstimo", "emprestimo"] }
+  ];
+
+  const candidates = [];
+
+  for (const item of map) {
+    if (item.words.some(w => text.includes(w))) {
+      const found = categories.find(
+        c => String(c.name).toLowerCase() === item.cat.toLowerCase()
+      );
+      if (found) candidates.push(found.name);
+    }
+  }
+
+  if (candidates.length === 0) return { category: null, suggestions: [] };
+  if (candidates.length === 1) return { category: candidates[0], suggestions: [] };
+
+  // Ambíguo → deixar o usuário escolher
+  return { category: null, suggestions: [...new Set(candidates)] };
+}
 
 //
 // ======================================================================
 // CONFIRMAÇÃO FORMATADA
 // ======================================================================
+
 function formatConfirmation(data) {
-  const amount = Number(data.amount);
+  const amount = Number(data.amount || 0);
   const emoji = data.type === "expense" ? "🔴 Despesa" : "🟢 Receita";
   const freq = data.frequency === "fixed" ? "Fixa" : "Variável";
   const today = new Date().toLocaleDateString("pt-BR");
 
   return `${emoji} | 📅 ${freq}
 💰 Valor: R$ ${amount.toFixed(2)}
-📝 Descrição: ${data.description}
-💳 Conta: ${data.account_name}
-📁 Categoria: ${data.category_name}
+📝 Descrição: ${data.description || "-"}
+💳 Conta: ${data.account_name || "-"}
+📁 Categoria: ${data.category_name || "-"}
 _${today}_
 
-Confirma o lançamento? Responda SIM ou NÃO.`;
+Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
+}
+
+//
+// ======================================================================
+// OUTROS AJUDANTES
+// ======================================================================
+
+function inferDescription(msg) {
+  return (
+    msg
+      .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/g, "")
+      .replace(/(\d+[.,]?\d*)/g, "")
+      .trim() || "Lançamento"
+  );
+}
+
+function inferWallet(desc, wallets) {
+  if (!wallets || wallets.length === 0) return null;
+  const d = desc.toLowerCase();
+  const found = wallets.find(w =>
+    d.includes(String(w.name).toLowerCase())
+  );
+  return found ? found.name : null;
 }
