@@ -246,14 +246,20 @@ function extractTransaction(message) {
 // ========================================================================
 
 function formatConfirmation(data) {
-  const emoji = data.type === "expense" ? "🔴 *Despesa*" : "🟢 *Receita*";
+  // segurança: se amount não existir, não usar toFixed
+  if (!data.amount || isNaN(Number(data.amount))) {
+    return `Só mais uma coisa 😉\nQual é o *valor* desse lançamento?\n\nExemplo: 20, 35.90, 120`;
+  }
+
+  const amount = Number(data.amount);
+  const typeEmoji = data.type === "expense" ? "🔴 *Despesa*" : "🟢 *Receita*";
 
   const today = new Date().toLocaleDateString("pt-BR");
 
-  return `${emoji} | 📅 Variável
-💰 *Valor*: R$ ${data.amount.toFixed(2)}
-📝 *Descrição*: ${data.description}
-💳 *Conta*: ${data.account_name}
+  return `${typeEmoji} | 📅 Variável
+💰 *Valor*: R$ ${amount.toFixed(2)}
+📝 *Descrição*: ${data.description || "Sem descrição"}
+💳 *Conta*: ${data.account_name || "Selecionar"}
 📁 *Categoria*: ${data.category_name || "Selecionar"}
 _${today}_
 
