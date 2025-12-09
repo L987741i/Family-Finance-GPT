@@ -1,3 +1,5 @@
+// /api/chat.js — IA Financeira + Lovable
+// Versão 2025 — Categorização Inteligente Baseada em Regras
 
 let globalContext = {};
 
@@ -489,4 +491,3 @@ function inferWallet(desc, wallets) {
   const found = wallets.find(w => d.includes(w.name.toLowerCase()));
   return found ? found.name : null;
 }
-```
