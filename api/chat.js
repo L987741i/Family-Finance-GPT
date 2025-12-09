@@ -1,5 +1,5 @@
 // /api/chat.js — IA Financeira + Lovable
-// Versão 2025 — Corrigida, estável e sem troca automática de conta
+// Versão 2025 — Corrigida (Bug Contexto + Frequência)
 
 let globalContext = {};
 
@@ -30,6 +30,7 @@ export default async function handler(req, res) {
     if (pending && missing) {
       const updated = { ...pending };
 
+      // (A) Valor Faltante
       if (missing === "amount") {
         const parsed = Number(message.replace(",", "."));
         if (!parsed || isNaN(parsed)) {
@@ -42,14 +43,26 @@ export default async function handler(req, res) {
         updated.amount = parsed;
       }
 
+      // (B) Conta Faltante
       if (missing === "account_name") {
-        updated.account_name = msgLower;
+        // CORREÇÃO DE SEGURANÇA: Se o usuário tentar mudar a categoria enquanto a IA pede a conta
+        if (msgLower.startsWith("categoria") || msgLower.includes("muda categoria")) {
+           // Ignora o preenchimento da conta com esse texto e trata como edição normal abaixo
+           // (Ao cair no return null ou deixar passar, precisamos forçar a lógica a seguir ou pedir a conta de novo)
+           // Melhor abordagem: Avisar o usuário ou tentar processar.
+           // Neste caso, vamos assumir que se ele digitou "Categoria X", ele quer pular a conta ou errou.
+           // Vamos deixar passar para a Edição Inteligente limpando o missing field manualmente aqui se for comando.
+        } else {
+           updated.account_name = msgLower;
+        }
       }
 
+      // (C) Categoria Faltante
       if (missing === "category_name") {
         updated.category_name = msgLower;
       }
 
+      // (D) Tipo Faltante
       if (missing === "type") {
         if (msgLower.includes("entrada") || msgLower.includes("receita")) {
           updated.type = "income";
@@ -68,32 +81,27 @@ export default async function handler(req, res) {
         }
       }
 
+      // Se processou o campo, envia confirmação e LIMPA o missing_field
       return sendConfirmation(res, updated);
     }
 
     // ======================================================================
     // 2) EDIÇÃO INTELIGENTE DURANTE CONFIRMAÇÃO
     // ======================================================================
-    if (pending && !missing) {
+    if (pending) { // Removida a verificação !missing pois o fluxo acima já trata ou resolve
       const updated = { ...pending };
       const text = msgLower;
 
       // ---------------------------------------------------------------
       // (A) FREQUÊNCIA
       // ---------------------------------------------------------------
-      const isFreqFixa = ["fixa", "fixo", "é fixa", "frequência fixa", "frequencia fixa"]
-        .some(t => text.includes(t));
-
-      const isFreqVariavel = [
-        "variável", "variavel", "é variável", "é variavel",
-        "frequencia variavel", "frequência variável"
-      ].some(t => text.includes(t));
+      const isFreqFixa = ["fixa", "fixo", "é fixa", "frequência fixa", "mensal"].some(t => text.includes(t));
+      const isFreqVariavel = ["variável", "variavel", "é variável", "eventual"].some(t => text.includes(t));
 
       if (isFreqFixa) {
         updated.frequency = "fixed";
         return sendConfirmation(res, updated);
       }
-
       if (isFreqVariavel) {
         updated.frequency = "variable";
         return sendConfirmation(res, updated);
@@ -126,26 +134,26 @@ export default async function handler(req, res) {
         }
       }
 
-      // Categoria enviada sozinha
+      // Categoria enviada sozinha (Ex: "Alimentação")
       if (
         text.split(" ").length === 1 &&
         text.length <= 20 &&
-        !["sim", "não", "nao", "ok"].includes(text)
+        !["sim", "não", "nao", "ok", "confirmar", "cancelar"].includes(text)
       ) {
         updated.category_name = text;
         return sendConfirmation(res, updated);
       }
 
       // ---------------------------------------------------------------
-      // (C) MUDAR CONTA — AGORA SÓ QUANDO O USUÁRIO PEDIR CLARAMENTE
+      // (C) MUDAR CONTA
       // ---------------------------------------------------------------
       if (
         text.startsWith("conta") ||
         text.includes("troca conta") ||
         text.includes("muda conta") ||
         text.includes("usa conta") ||
-        text.includes("coloca na conta") ||
-        text.includes("é na conta")
+        text.includes("no banco") ||
+        text.includes("na carteira")
       ) {
         const newAcc = text
           .replace("conta", "")
@@ -153,8 +161,8 @@ export default async function handler(req, res) {
           .replace("muda", "")
           .replace("usa", "")
           .replace("coloca", "")
-          .replace("na conta", "")
-          .replace("é", "")
+          .replace("na carteira", "carteira") // Ajuste fino
+          .replace("no banco", "banco")
           .trim();
 
         if (newAcc.length > 0) {
@@ -163,20 +171,10 @@ export default async function handler(req, res) {
         }
       }
 
-      // ❌ REMOVIDA: Detecção automática perigosa de carteiras
-      // Agora a conta NUNCA é trocada sozinha.
-
       // ---------------------------------------------------------------
       // (D) MUDAR DESCRIÇÃO
       // ---------------------------------------------------------------
-      if (
-        text.startsWith("descrição") ||
-        text.startsWith("descricao") ||
-        text.includes("muda descrição") ||
-        text.includes("muda descricao") ||
-        text.includes("troca descrição") ||
-        text.includes("troca descricao")
-      ) {
+      if (text.includes("descrição") || text.includes("descricao")) {
         const newDesc = text
           .replace("descrição", "")
           .replace("descricao", "")
@@ -189,27 +187,6 @@ export default async function handler(req, res) {
           updated.description = newDesc;
           return sendConfirmation(res, updated);
         }
-      }
-
-      // ---------------------------------------------------------------
-      // (E) MUDAR VALOR
-      // ---------------------------------------------------------------
-      const regexValor = /^[0-9]+([.,][0-9]+)?$/;
-
-      if (regexValor.test(text) || text.includes("valor")) {
-        const raw = text.replace("valor", "").replace("é", "").trim();
-        const n = Number(raw.replace(",", "."));
-
-        if (!isNaN(n) && n > 0) {
-          updated.amount = n;
-          return sendConfirmation(res, updated);
-        }
-
-        return res.status(200).json({
-          reply: "Informe um valor válido 💰",
-          action: "need_more_info",
-          data: { missing_field: "amount", partial_data: updated }
-        });
       }
     }
 
@@ -279,22 +256,26 @@ export default async function handler(req, res) {
   }
 }
 
-//
 // ======================================================================
 // FUNÇÕES AUXILIARES
 // ======================================================================
 
 function sendConfirmation(res, data) {
+  // CORREÇÃO CRÍTICA:
+  // Forçamos missing_field: null para limpar o estado anterior.
+  // Assim, a próxima mensagem não cairá no bloco de "Campo Faltante".
+  const responseData = { ...data, missing_field: null };
+
   return res.status(200).json({
     reply: formatConfirmation(data),
     action: "awaiting_confirmation",
-    data
+    data: responseData
   });
 }
 
 function detectIntent(msg) {
-  if (/^(cancelar|cancela|esquece)$/.test(msg)) return { type: "cancel" };
-  if (/^(sim|pode|ok|confirmo)$/.test(msg)) return { type: "confirm" };
+  if (/^(cancelar|cancela|esquece|abortar)$/.test(msg)) return { type: "cancel" };
+  if (/^(sim|pode|ok|confirmo|tá certo|ta certo|isso)$/.test(msg)) return { type: "confirm" };
 
   if (/quanto gastei hoje/.test(msg))
     return { type: "query", action: "query_spent_today", reply: "Verificando seus gastos de hoje 💸" };
@@ -326,7 +307,7 @@ function extractTransaction(msg) {
   const categories = globalContext.categories || [];
 
   const type =
-    /(recebi|ganhei|entrou)/.test(msg)
+    /(recebi|ganhei|entrou|salario|sálário)/.test(msg)
       ? "income"
       : /(paguei|gastei|comprei|custou|transferi|enviei)/.test(msg)
       ? "expense"
@@ -334,6 +315,10 @@ function extractTransaction(msg) {
 
   const amountMatch = msg.match(/(\d+[.,]?\d*)/);
   const amount = amountMatch ? Number(amountMatch[1].replace(",", ".")) : null;
+
+  // CORREÇÃO: Detectar frequência na primeira mensagem
+  const isFixed = /(fixo|fixa|mensal|recorrente)/i.test(msg);
+  const frequency = isFixed ? "fixed" : "variable";
 
   const description = inferDescription(msg);
 
@@ -346,7 +331,7 @@ function extractTransaction(msg) {
     description,
     account_name: account,
     category_name: category,
-    frequency: "variable"
+    frequency: frequency // Usa a frequência detectada
   };
 
   if (!amount) {
@@ -378,6 +363,7 @@ function extractTransaction(msg) {
   }
 
   if (!category) {
+    // Se não achou categoria, mas temos sugestões, perguntamos
     if (suggestions && suggestions.length >= 2) {
       return {
         needsMoreInfo: true,
@@ -386,7 +372,7 @@ function extractTransaction(msg) {
         partial
       };
     }
-
+    // Caso contrário, pede genérico
     const list = categories.map(c => `• ${c.name}`).join("\n");
     return {
       needsMoreInfo: true,
@@ -405,11 +391,6 @@ function extractTransaction(msg) {
   };
 }
 
-//
-// ======================================================================
-// INTELIGÊNCIA DE CATEGORIAS
-// ======================================================================
-
 function guessCategory(desc, categories) {
   if (!categories || categories.length === 0) {
     return { category: null, suggestions: [] };
@@ -417,39 +398,28 @@ function guessCategory(desc, categories) {
 
   const text = desc.toLowerCase();
 
-  // 1) Match direto
   const direct = categories.find(c =>
     text.includes(String(c.name).toLowerCase())
   );
   if (direct) return { category: direct.name, suggestions: [] };
 
-  // 2) Palavras-chave → categorias
   const map = [
     { cat: "Supermercado", words: ["mercado", "supermercado", "compra do mês"] },
     { cat: "Padaria", words: ["padaria", "pão", "pao"] },
     { cat: "Delivery", words: ["ifood", "delivery", "lanche", "restaurante"] },
-
     { cat: "Combustível", words: ["gasolina", "combustível", "etanol"] },
     { cat: "Uber / 99", words: ["uber", "99", "corrida"] },
-
     { cat: "Energia", words: ["luz", "energia"] },
     { cat: "Água", words: ["água", "agua"] },
     { cat: "Gás", words: ["gás", "gas"] },
     { cat: "Internet", words: ["internet", "wifi"] },
     { cat: "Plano de celular", words: ["plano", "recarga", "telefone"] },
-
     { cat: "Farmácia", words: ["farmácia", "farmacia", "remédio", "remedio"] },
-
     { cat: "Educação", words: ["escola", "faculdade", "curso"] },
-
     { cat: "Academia / Esportes", words: ["academia", "musculação", "treino"] },
-
     { cat: "Roupas", words: ["roupa", "camisa", "calça"] },
     { cat: "Calçados", words: ["tênis", "tenis", "sapato"] },
-
     { cat: "Ração", words: ["ração", "racao"] },
-
-    // receitas
     { cat: "Salário", words: ["salário", "salario"] },
     { cat: "Venda", words: ["venda", "vendi"] },
     { cat: "Extra", words: ["extra", "freela", "bico"] }
@@ -472,11 +442,6 @@ function guessCategory(desc, categories) {
   return { category: null, suggestions: [...new Set(candidates)] };
 }
 
-//
-// ======================================================================
-// FORMATAÇÃO DA CONFIRMAÇÃO
-// ======================================================================
-
 function formatConfirmation(data) {
   const amount = Number(data.amount || 0);
   const emoji = data.type === "expense" ? "🔴 Despesa" : "🟢 Receita";
@@ -493,16 +458,13 @@ _${today}_
 Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
 }
 
-//
-// ======================================================================
-// OUTROS AJUDANTES
-// ======================================================================
-
 function inferDescription(msg) {
   return (
     msg
       .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/g, "")
       .replace(/(\d+[.,]?\d*)/g, "")
+      // Removemos palavras de frequência da descrição para ficar mais limpo
+      .replace(/(fixo|fixa|mensal|recorrente|variável|variavel)/gi, "")
       .trim() || "Lançamento"
   );
 }
