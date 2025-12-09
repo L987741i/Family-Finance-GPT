@@ -1,4 +1,5 @@
-// /api/chat.js — versão 100% ESM compatível com Vercel Serverless
+// /api/chat.js — versão aprimorada, humanizada e com personalidade ✨
+// Totalmente compatível com Vercel Serverless (ESM)
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -9,27 +10,33 @@ export default async function handler(req, res) {
   try {
     const { message, history, context } = req.body || {};
 
+    // ============================
+    //   VALIDAÇÃO INICIAL
+    // ============================
     if (!message || typeof message !== "string") {
       res.status(200).json({
-        reply: "Não entendi muito bem. Pode explicar de outra forma?",
+        reply: "Hmm… não consegui entender direitinho 🤔\nPode tentar dizer de outro jeito?",
         action: "message"
       });
       return;
     }
 
-    // Detectar intenção
     const intent = detectIntent(message);
 
-    // CANCELAR
+    // ============================
+    //      CANCELAR OPERAÇÃO
+    // ============================
     if (intent.type === "cancel") {
       res.status(200).json({
-        reply: "Tudo bem, operação cancelada 👍",
+        reply: "Tudo certo 👍\nO que você quiser cancelar, está cancelado!",
         action: "cancelled"
       });
       return;
     }
 
-    // CONSULTAS (quem calcula é o Lovable)
+    // ============================
+    //   CONSULTAS / RELATÓRIOS
+    // ============================
     if (intent.type === "query") {
       res.status(200).json({
         reply: intent.reply,
@@ -39,27 +46,32 @@ export default async function handler(req, res) {
       return;
     }
 
-    // CONFIRMAR TRANSAÇÃO
+    // ============================
+    // CONFIRMAR TRANSAÇÃO PENDENTE
+    // ============================
     if (intent.type === "confirm") {
       const pending = context?.pending_transaction;
 
       if (!pending) {
         res.status(200).json({
-          reply: "Não encontrei nada para confirmar. Me diga novamente o que quer registrar 😊",
+          reply:
+            "Hmm... não encontrei nada aqui pra confirmar 🤔\nMe lembra rapidinho o que você quer registrar?",
           action: "message"
         });
         return;
       }
 
       res.status(200).json({
-        reply: "Perfeito! Vou registrar isso agora 🎯",
+        reply: "Perfeito! Já vou lançar isso pra você agora mesmo 🚀",
         action: "success",
         data: pending
       });
       return;
     }
 
-    // TRANSAÇÃO NORMAL
+    // ============================
+    //  NOVA TRANSAÇÃO
+    // ============================
     if (intent.type === "transaction") {
       const parsed = extractTransaction(message);
 
@@ -83,20 +95,27 @@ export default async function handler(req, res) {
       return;
     }
 
-    // MENSAGEM GENÉRICA
+    // ============================
+    // MENSAGEM GENÉRICA / AJUDA
+    // ============================
     res.status(200).json({
       reply:
-        "Oi! Sou seu assistente financeiro. Você pode me enviar mensagens como:\n\n" +
-        "• 'paguei 50 no mercado'\n" +
-        "• 'quanto gastei hoje?'\n" +
-        "• 'recebi 200 de salário'\n" +
-        "• 'qual meu saldo?'",
+        "Oi! Eu sou a sua IA financeira 🌟\n" +
+        "Posso te ajudar com lançamentos e consultas rapidinho.\n\n" +
+        "Experimente me dizer:\n" +
+        "• “paguei 50 no mercado 🛒”\n" +
+        "• “quanto gastei hoje?” 📅\n" +
+        "• “recebi 200 de salário 💼”\n" +
+        "• “qual meu saldo?” 📊",
       action: "message"
     });
+
   } catch (err) {
     console.error("Erro na IA externa:", err);
+
     res.status(500).json({
-      reply: "Tive um problema técnico agora 😕. Pode tentar novamente?",
+      reply:
+        "Ops! Tive um probleminha técnico agora 😕\nPode tentar novamente pra mim?",
       action: "error",
       details: String(err)
     });
@@ -104,8 +123,9 @@ export default async function handler(req, res) {
 }
 
 // =============================================================
-// INTENT DETECTION
+//                 DETECÇÃO DE INTENÇÃO 🧠
 // =============================================================
+
 function detectIntent(message) {
   const msg = message.toLowerCase().trim();
 
@@ -117,11 +137,12 @@ function detectIntent(message) {
     return { type: "confirm" };
   }
 
+  // CONSULTAS
   if (/quanto gastei hoje|gastei hoje/.test(msg)) {
     return {
       type: "query",
       action: "query_spent_today",
-      reply: "Claro! Vou conferir quanto você gastou hoje 💰"
+      reply: "Beleza! Vou conferir seus gastos de hoje 💰✨"
     };
   }
 
@@ -129,7 +150,7 @@ function detectIntent(message) {
     return {
       type: "query",
       action: "query_spent_week",
-      reply: "Certo! Vou ver seus gastos desta semana 🗓️"
+      reply: "Um segundo! Vou puxar seus gastos desta semana 🗓️📊"
     };
   }
 
@@ -138,7 +159,7 @@ function detectIntent(message) {
     return {
       type: "query",
       action: "query_spent_month",
-      reply: "Vou verificar como está seu mês financeiro 📊",
+      reply: "Deixa comigo! Vou verificar como está seu mês financeiro 🔎📆",
       data: {
         month: now.getMonth() + 1,
         year: now.getFullYear()
@@ -150,7 +171,7 @@ function detectIntent(message) {
     return {
       type: "query",
       action: "query_received_today",
-      reply: "Beleza! Vou ver quanto entrou hoje 👀"
+      reply: "Certo! Vou ver quanto entrou hoje 👀💵"
     };
   }
 
@@ -158,10 +179,11 @@ function detectIntent(message) {
     return {
       type: "query",
       action: "query_balance",
-      reply: "Claro! Vou calcular seu saldo geral 💼"
+      reply: "Já vou calcular seu saldo total 📊🔥"
     };
   }
 
+  // TRANSAÇÕES
   if (/(paguei|gastei|comprei|usei|recebi|ganhei|entrou)/.test(msg)) {
     return { type: "transaction" };
   }
@@ -170,7 +192,7 @@ function detectIntent(message) {
 }
 
 // =============================================================
-// TRANSACTION EXTRACTION
+//                EXTRAÇÃO DE TRANSAÇÃO 📝
 // =============================================================
 
 function extractTransaction(message) {
@@ -201,32 +223,35 @@ function extractTransaction(message) {
     frequency: "variable"
   };
 
+  // FALTA O VALOR
   if (!amount) {
     return {
       needsMoreInfo: true,
       missingField: "amount",
-      reply: `Perfeito! Quanto foi *${description}*?`,
+      reply: `Perfeito! Quanto foi *${description}*? 💵`,
       partial
     };
   }
 
+  // FALTA O TIPO
   if (!type) {
     return {
       needsMoreInfo: true,
       missingField: "type",
-      reply: "Isso foi entrada ou saída?",
+      reply: "Isso foi entrada ou saída? 🤔",
       partial
     };
   }
 
+  // CONFIRMAÇÃO FINAL
   const confirmation =
-    `Entendi! Vamos confirmar:\n\n` +
-    `• Tipo: ${type === "expense" ? "Despesa" : "Receita"}\n` +
+    `Ótimo! Vamos confirmar tudo certinho 👇\n\n` +
+    `• Tipo: ${type === "expense" ? "Despesa 💸" : "Receita 💰"}\n` +
     `• Valor: R$ ${amount.toFixed(2)}\n` +
     `• Descrição: ${description}\n` +
     `• Categoria sugerida: ${suggested_category_name}\n` +
-    (installments ? `• Parcelado em ${installments}x\n` : "") +
-    `\nPosso registrar?`;
+    (installments ? `• Parcelado: ${installments}x\n` : "") +
+    `\nPosso registrar pra você? 😊`;
 
   return {
     needsMoreInfo: false,
@@ -236,7 +261,7 @@ function extractTransaction(message) {
 }
 
 // =============================================================
-// HELPERS
+//                HELPERS INTELIGENTES ⚙️
 // =============================================================
 
 function inferDescription(msg) {
@@ -262,9 +287,9 @@ function inferInstallments(msg) {
 }
 
 function inferCategory(desc) {
-  if (/mercado|supermercado|ifood|almoço|restaurante/.test(desc)) return "Alimentação";
-  if (/uber|gasolina|combustivel|estacionamento/.test(desc)) return "Transporte";
-  if (/luz|agua|internet|celular|telefone/.test(desc)) return "Contas Mensais";
-  if (/farmacia|remedio|hospital|dentista/.test(desc)) return "Saúde";
-  return "Outros";
+  if (/mercado|supermercado|ifood|almoço|restaurante/.test(desc)) return "Alimentação 🍽️";
+  if (/uber|gasolina|combustivel|estacionamento/.test(desc)) return "Transporte 🚗";
+  if (/luz|agua|internet|celular|telefone/.test(desc)) return "Contas Mensais 📡";
+  if (/farmacia|remedio|hospital|dentista/.test(desc)) return "Saúde 🏥";
+  return "Outros 🗂️";
 }
