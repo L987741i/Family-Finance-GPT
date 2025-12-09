@@ -1,98 +1,329 @@
 // /api/chat.js — IA Financeira + Lovable
-// Versão 2025 — Categorização Inteligente Baseada em Regras
+// Versão 2025 — Categorias Fixas + Hierarquia + Estabilidade Total
 
 let globalContext = {};
 
+//
 // ======================================================================
-// 🧠 BASE DE CONHECIMENTO (As categorias que você definiu)
+// 🧠 1) DEFINIÇÃO OFICIAL DE CATEGORIAS (agrupamento + filhos + keywords)
 // ======================================================================
-const CATEGORY_MAP = {
+//
+
+const CATEGORY_TREE = {
   expense: [
-    // 🏠 Moradia
-    { name: "Aluguel", keywords: ["aluguel", "alugue", "moradia"] },
-    { name: "Financiamento / Prestação", keywords: ["financiamento", "prestação", "prestacao", "financiado"] },
-    { name: "Condomínio", keywords: ["condomínio", "condominio", "predio"] },
-    { name: "IPTU", keywords: ["iptu", "imposto casa"] },
-    
-    // ⚡ Contas Essenciais
-    { name: "Energia", keywords: ["energia", "luz", "eletricidade", "enel", "light"] },
-    { name: "Água", keywords: ["água", "agua", "cedae", "sabesp"] },
-    { name: "Gás", keywords: ["gás", "gas", "botijão"] },
-    { name: "Internet", keywords: ["internet", "wifi", "banda larga", "vivo", "claro", "tim"] },
-    { name: "Telefonia", keywords: ["telefonia", "telefone", "celular", "recarga", "plano"] },
+    {
+      group: "Moradia",
+      items: [
+        { name: "Aluguel", keywords: ["aluguel", "alugue"] },
+        { name: "Financiamento / Prestação", keywords: ["financiamento", "prestação", "prestacao"] },
+        { name: "Condomínio", keywords: ["condomínio", "condominio"] },
+        { name: "IPTU", keywords: ["iptu"] }
+      ]
+    },
 
-    // 🛒 Alimentação
-    { name: "Supermercado", keywords: ["supermercado", "mercado", "compra do mês", "compras", "assai", "atacadao", "carrefour"] },
-    { name: "Padaria", keywords: ["padaria", "pão", "pao", "leite", "café da manhã"] },
-    { name: "Açougue", keywords: ["açougue", "acougue", "carne", "frango", "churrasco"] },
-    { name: "Feira", keywords: ["feira", "hortifruti", "legumes", "frutas"] },
-    { name: "Restaurante", keywords: ["restaurante", "almoço", "jantar", "comida fora"] },
-    { name: "Lanche", keywords: ["lanche", "ifood", "burger", "pizza", "mc donalds", "delivery"] },
+    {
+      group: "Contas Essenciais",
+      items: [
+        { name: "Energia", keywords: ["energia", "luz", "eletricidade"] },
+        { name: "Água", keywords: ["água", "agua", "cedae"] },
+        { name: "Gás", keywords: ["gás", "gas", "botijão"] },
+        { name: "Internet", keywords: ["internet", "wifi"] },
+        { name: "Telefonia", keywords: ["telefone", "celular", "recarga", "plano"] }
+      ]
+    },
 
-    // 🚗 Transporte
-    { name: "Combustível", keywords: ["combustível", "combustivel", "gasolina", "etanol", "diesel", "abastecer", "posto"] },
-    { name: "Estacionamento", keywords: ["estacionamento", "zona azul", "shopping"] },
-    { name: "Pedágio", keywords: ["pedágio", "pedagio", "sem parar"] },
-    { name: "Manutenção Veicular", keywords: ["manutenção", "mecânico", "oficina", "peça carro", "óleo"] },
-    { name: "Seguro Auto", keywords: ["seguro auto", "seguro carro", "ipva"] },
-    // Adicionado Uber genérico em transporte
-    { name: "Transporte App / Público", keywords: ["uber", "99", "táxi", "ônibus", "metrô", "passagem"] },
+    {
+      group: "Alimentação",
+      items: [
+        { name: "Supermercado", keywords: ["mercado", "supermercado", "compra do mês"] },
+        { name: "Padaria", keywords: ["padaria", "pão", "pao"] },
+        { name: "Açougue", keywords: ["açougue", "acougue"] },
+        { name: "Feira", keywords: ["feira", "hortifruti"] },
+        { name: "Restaurante", keywords: ["almoço", "jantar", "restaurante"] },
+        { name: "Lanche", keywords: ["lanche", "ifood", "delivery", "burger", "pizza"] }
+      ]
+    },
 
-    // 💊 Saúde
-    { name: "Farmácia", keywords: ["farmácia", "farmacia", "remédio", "remedio", "drogaria"] },
-    { name: "Consultas", keywords: ["consulta", "médico", "dentista", "psicólogo"] },
-    { name: "Exames", keywords: ["exame", "laboratório", "sangue"] },
-    { name: "Hospital", keywords: ["hospital", "pronto socorro"] },
-    { name: "Plano de Saúde", keywords: ["plano de saúde", "convênio", "unimed", "bradesco saúde"] },
+    {
+      group: "Transporte",
+      items: [
+        { name: "Combustível", keywords: ["gasolina", "etanol", "combustível"] },
+        { name: "Estacionamento", keywords: ["estacionamento", "zona azul"] },
+        { name: "Pedágio", keywords: ["pedágio", "pedagio"] },
+        { name: "Manutenção Veicular", keywords: ["oficina", "mecânico", "manutenção"] },
+        { name: "Seguro Auto", keywords: ["seguro auto"] },
+        { name: "Transporte App / Público", keywords: ["uber", "99", "ônibus", "trem", "metrô"] }
+      ]
+    },
 
-    // 🎓 Educação
-    { name: "Escola", keywords: ["escola", "colégio", "mensalidade escolar", "matrícula"] },
-    { name: "Cursos", keywords: ["curso", "inglês", "faculdade", "universidade", "udemy"] },
-    { name: "Material Escolar", keywords: ["material escolar", "livro", "caderno", "papelaria"] },
+    {
+      group: "Saúde",
+      items: [
+        { name: "Farmácia", keywords: ["farmácia", "farmacia", "remédio"] },
+        { name: "Consultas", keywords: ["consulta", "dentista", "psicólogo"] },
+        { name: "Exames", keywords: ["exame", "laboratório"] },
+        { name: "Hospital", keywords: ["hospital"] },
+        { name: "Plano de Saúde", keywords: ["plano de saúde", "unimed"] }
+      ]
+    },
 
-    // 🎉 Lazer
-    { name: "Cinema", keywords: ["cinema", "filme", "pipoca"] },
-    { name: "Viagem", keywords: ["viagem", "passagem aerea", "hotel", "pousada", "férias"] },
-    { name: "Passeios", keywords: ["passeio", "parque", "ingresso", "show", "teatro"] },
-    { name: "Streaming", keywords: ["streaming", "netflix", "spotify", "prime", "disney", "assinatura"] },
+    {
+      group: "Educação",
+      items: [
+        { name: "Escola", keywords: ["escola", "colégio"] },
+        { name: "Cursos", keywords: ["curso", "faculdade", "ingles"] },
+        { name: "Material Escolar", keywords: ["material escolar", "caderno"] }
+      ]
+    },
 
-    // 👕 Vestuário
-    { name: "Roupas", keywords: ["roupas", "camisa", "camiseta", "vestido", "calça", "loja de roupa"] },
-    { name: "Calçados", keywords: ["calçados", "tênis", "sapato", "chinelo"] },
-    { name: "Acessórios", keywords: ["acessórios", "bolsa", "relógio", "joia"] },
+    {
+      group: "Lazer",
+      items: [
+        { name: "Cinema", keywords: ["cinema", "filme"] },
+        { name: "Viagem", keywords: ["viagem", "hotel"] },
+        { name: "Passeios", keywords: ["passeio", "parque", "ingresso"] },
+        { name: "Streaming", keywords: ["netflix", "spotify", "prime", "disney"] }
+      ]
+    },
 
-    // 🏦 Financeiro
-    { name: "Tarifa Bancária", keywords: ["tarifa", "taxa", "banco", "cesta"] },
-    { name: "Anuidade Cartão", keywords: ["anuidade", "cartão de crédito"] },
-    { name: "Juros", keywords: ["juros", "cheque especial"] },
-    { name: "Multas", keywords: ["multa", "atraso"] },
+    {
+      group: "Vestuário",
+      items: [
+        { name: "Roupas", keywords: ["roupa", "blusa", "camisa", "calça"] },
+        { name: "Calçados", keywords: ["tênis", "sapato"] },
+        { name: "Acessórios", keywords: ["relógio", "bolsa"] }
+      ]
+    },
 
-    // 📦 Casa & Manutenção
-    { name: "Reforma", keywords: ["reforma", "pedreiro", "pintor", "obra", "material de construção"] },
-    { name: "Móveis", keywords: ["móveis", "sofá", "cama", "mesa", "cadeira"] },
-    { name: "Ferramentas", keywords: ["ferramentas", "furadeira"] },
+    {
+      group: "Financeiro",
+      items: [
+        { name: "Tarifa Bancária", keywords: ["tarifa", "taxa bancária"] },
+        { name: "Anuidade Cartão", keywords: ["anuidade", "cartão de crédito"] },
+        { name: "Juros", keywords: ["juros", "atraso"] },
+        { name: "Multas", keywords: ["multa"] }
+      ]
+    },
 
-    // 🐾 Pets
-    { name: "Ração", keywords: ["ração", "pet", "gato", "cachorro"] },
-    { name: "Veterinário", keywords: ["veterinário", "vacina pet"] },
-    { name: "Higiene Pet", keywords: ["banho e tosa", "petshop"] },
+    {
+      group: "Casa & Manutenção",
+      items: [
+        { name: "Reforma", keywords: ["reforma", "obra", "pedreiro"] },
+        { name: "Móveis", keywords: ["sofá", "cama", "mesa", "cadeira"] },
+        { name: "Ferramentas", keywords: ["furadeira", "martelo"] }
+      ]
+    },
 
-    // 🎁 Outros
-    { name: "Presentes", keywords: ["presente", "aniversário"] },
-    { name: "Doações", keywords: ["doação", "dízimo", "caridade"] },
-    { name: "Emergências", keywords: ["emergência", "imprevisto"] }
+    {
+      group: "Pets",
+      items: [
+        { name: "Ração", keywords: ["ração", "racao"] },
+        { name: "Veterinário", keywords: ["veterinário"] },
+        { name: "Higiene", keywords: ["banho e tosa", "petshop"] }
+      ]
+    },
+
+    {
+      group: "Outros / Diversos",
+      items: [
+        { name: "Presentes", keywords: ["presente"] },
+        { name: "Doações", keywords: ["doação", "dizimo"] },
+        { name: "Emergências", keywords: ["emergência", "imprevisto"] }
+      ]
+    }
   ],
+
   income: [
-    { name: "Salário", keywords: ["salário", "salario", "pagamento", "holerite", "mensal"] },
-    { name: "Investimentos", keywords: ["investimento", "dividendo", "rendimento", "aplicação", "cdb", "ações"] },
-    { name: "Extras", keywords: ["extra", "freela", "bico", "bônus", "serviço"] },
-    { name: "Presentes", keywords: ["presente", "ganhei dinheiro"] },
-    { name: "Venda", keywords: ["venda", "vendi", "desapego"] },
-    { name: "Empréstimo", keywords: ["empréstimo", "peguei emprestado"] },
-    { name: "Juros Recebidos", keywords: ["juros"] },
-    { name: "Benefícios", keywords: ["benefício", "vr", "va", "vale", "reembolso"] }
+    { group: "Receita", items: [
+        { name: "Salário", keywords: ["salário", "salario", "pagamento"] },
+        { name: "Investimentos", keywords: ["investimento", "dividendos"] },
+        { name: "Extras", keywords: ["freela", "bico", "extra"] },
+        { name: "Presentes", keywords: ["presente", "ganhei"] },
+        { name: "Venda", keywords: ["venda", "vendi"] },
+        { name: "Empréstimo (entrada)", keywords: ["emprestimo", "entrada"] },
+        { name: "Juros", keywords: ["juros"] },
+        { name: "Benefícios", keywords: ["vr", "va", "benefício"] }
+    ]}
   ]
 };
+
+
+//
+// ======================================================================
+// 🧪 2) FUNÇÃO DE CATEGORIZAÇÃO OFICIAL
+// ======================================================================
+//
+
+function findBestCategory(text, type = "expense") {
+  const list = CATEGORY_TREE[type] || [];
+
+  let best = null;
+  let bestScore = 0;
+
+  const clean = text.toLowerCase();
+
+  for (const group of list) {
+    for (const item of group.items) {
+      let score = 0;
+
+      const itemName = item.name.toLowerCase();
+
+      if (clean === itemName) score += 100;
+      else if (clean.includes(itemName)) score += 60;
+
+      for (const kw of item.keywords) {
+        if (clean.includes(kw.toLowerCase())) {
+          score += 40 + kw.length;
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = `${group.group} / ${item.name}`;
+      }
+    }
+  }
+
+  return { best, score: bestScore };
+}
+
+
+//
+// ======================================================================
+// 🔍 3) DESCRIÇÃO E CARTEIRA
+// ======================================================================
+//
+
+function inferDescription(msg) {
+  return msg
+    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/gi, "")
+    .replace(/(\d+[.,]?\d*)/g, "")
+    .trim() || "Lançamento";
+}
+
+function inferWallet(desc, wallets) {
+  if (!wallets || wallets.length === 0) return null;
+
+  const d = desc.toLowerCase();
+
+  const w = wallets.find(w => d.includes(w.name.toLowerCase()));
+  return w ? w.name : null;
+}
+
+
+//
+// ======================================================================
+// 📦 4) FORMATAÇÃO DA CONFIRMAÇÃO
+// ======================================================================
+//
+
+function formatConfirmation(data) {
+  const amount = Number(data.amount || 0);
+  const emoji = data.type === "expense" ? "🔴 Despesa" : "🟢 Receita";
+  const freq = data.frequency === "fixed" ? "Fixa" : "Variável";
+  const today = new Date().toLocaleDateString("pt-BR");
+
+  return `${emoji} | 📅 ${freq}
+💰 Valor: R$ ${amount.toFixed(2)}
+📝 Descrição: ${data.description}
+💳 Conta: ${data.account_name}
+📁 Categoria: ${data.category_name}
+_${today}_
+
+Confirma o lançamento? (Sim/Não)`;
+}
+
+
+//
+// ======================================================================
+// 🧠 5) EXTRAÇÃO DE NOVA TRANSAÇÃO
+// ======================================================================
+//
+
+function extractTransaction(msg) {
+  const wallets = globalContext.wallets || [];
+
+  const type = /(recebi|ganhei|salario|entrada)/.test(msg) ? "income" : "expense";
+
+  const amountMatch = msg.match(/(\d+[.,]?\d*)/);
+  const amount = amountMatch ? Number(amountMatch[1].replace(",", ".")) : null;
+
+  const description = inferDescription(msg);
+
+  const account = inferWallet(description, wallets);
+
+  const { best: category } = findBestCategory(description, type);
+
+  const partial = {
+    type,
+    amount,
+    description,
+    account_name: account,
+    category_name: category,
+    frequency: /(fixo|fixa|mensal)/.test(msg) ? "fixed" : "variable"
+  };
+
+  if (!amount) {
+    return {
+      needsMoreInfo: true,
+      missingField: "amount",
+      reply: `Qual o valor de *${description}*? 💰`,
+      partial
+    };
+  }
+
+  if (!account) {
+    const list = wallets.map(w => `• ${w.name}`).join("\n");
+
+    return {
+      needsMoreInfo: true,
+      missingField: "account_name",
+      reply: `De qual conta saiu ou entrou? 💳\n\n${list}`,
+      partial
+    };
+  }
+
+  if (!category) {
+    return {
+      needsMoreInfo: true,
+      missingField: "category_name",
+      reply: `Qual categoria melhor representa esse lançamento?`,
+      partial
+    };
+  }
+
+  return {
+    needsMoreInfo: false,
+    fullData: partial,
+    confirmation: formatConfirmation(partial)
+  };
+}
+
+
+//
+// ======================================================================
+// 🧠 6) INTENÇÃO DO USUÁRIO
+// ======================================================================
+//
+
+function detectIntent(msg) {
+  if (/^(cancelar|cancela|esquece)$/.test(msg)) return { type: "cancel" };
+  if (/^(sim|ok|confirmo)$/.test(msg)) return { type: "confirm" };
+  if (/saldo/.test(msg)) return { type: "query", action: "query_balance", reply: "Calculando saldo..." };
+
+  if (/(paguei|gastei|comprei|recebi|ganhei|entrou)/.test(msg)) {
+    return { type: "transaction" };
+  }
+
+  return { type: "general" };
+}
+
+
+//
+// ======================================================================
+// 🧠 7) HANDLER PRINCIPAL
+// ======================================================================
+//
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -103,160 +334,101 @@ export default async function handler(req, res) {
     const { message, context } = req.body || {};
 
     globalContext = context || {};
+
     const pending = context?.pending_transaction || null;
     const missing = context?.missing_field || null;
 
-    if (!message || typeof message !== "string") {
+    if (!message) {
       return res.status(200).json({
         reply: "Não entendi 🤔 pode repetir?",
         action: "message"
       });
     }
 
-    const msgLower = message.toLowerCase().trim();
+    const msg = message.toLowerCase().trim();
 
-    // ======================================================================
-    // 1) CONTINUAÇÃO DE CAMPO FALTANTE
-    // ======================================================================
+    // ⚠ Se está esperando campo faltante, tratar primeiro
     if (pending && missing) {
       const updated = { ...pending };
 
-      // (A) Valor
       if (missing === "amount") {
-        const parsed = Number(message.replace(",", "."));
-        if (!parsed || isNaN(parsed)) {
+        const n = Number(msg.replace(",", "."));
+        if (!n) {
           return res.status(200).json({
-            reply: "Me diga um valor válido 💰",
+            reply: "Valor inválido. Me diga um valor real 💰",
             action: "need_more_info",
             data: { missing_field: "amount", partial_data: updated }
           });
         }
-        updated.amount = parsed;
+        updated.amount = n;
       }
 
-      // (B) Conta
       if (missing === "account_name") {
-        // Se usuário tentar mudar categoria agora, permitimos a edição inteligente
-        if (msgLower.startsWith("categoria") || msgLower.includes("muda categoria")) {
-           // Deixa passar para o bloco 2
-        } else {
-           updated.account_name = msgLower;
-        }
+        updated.account_name = msg;
       }
 
-      // (C) Categoria (Aqui entra a IA de associação também)
       if (missing === "category_name") {
-        // Tenta achar a categoria nativa com base no que o usuário digitou
-        const typeContext = updated.type || "expense"; // Default expense se não souber
-        const { bestMatch } = findBestCategory(msgLower, typeContext);
-        
-        updated.category_name = bestMatch ? bestMatch : msgLower; // Usa a nativa ou o que ele digitou
+        const { best } = findBestCategory(msg, updated.type);
+        updated.category_name = best || "Outros / Diversos";
       }
 
-      // (D) Tipo
-      if (missing === "type") {
-        if (msgLower.includes("entrada") || msgLower.includes("receita")) {
-          updated.type = "income";
-        } else if (msgLower.includes("saída") || msgLower.includes("despesa")) {
-          updated.type = "expense";
-        } else {
-          return res.status(200).json({
-            reply: "Isso foi *entrada* ou *saída*? 🤔",
-            action: "need_more_info",
-            data: { missing_field: "type", partial_data: updated }
-          });
-        }
-      }
-
-      // Se completou, confirma e limpa o missing
-      return sendConfirmation(res, updated);
+      return res.status(200).json({
+        reply: formatConfirmation(updated),
+        action: "awaiting_confirmation",
+        data: updated
+      });
     }
 
-    // ======================================================================
-    // 2) EDIÇÃO INTELIGENTE (DURANTE CONFIRMAÇÃO)
-    // ======================================================================
+    // 🔍 EDIÇÃO DURANTE CONFIRMAÇÃO
     if (pending) {
       const updated = { ...pending };
-      const text = msgLower;
 
-      // 2.1) FREQUÊNCIA
-      const isFreqFixa = ["fixa", "fixo", "mensal", "recorrente"].some(t => text.includes(t));
-      const isFreqVariavel = ["variável", "variavel", "eventual"].some(t => text.includes(t));
-
-      if (isFreqFixa) {
-        updated.frequency = "fixed";
-        return sendConfirmation(res, updated);
-      }
-      if (isFreqVariavel) {
-        updated.frequency = "variable";
-        return sendConfirmation(res, updated);
+      // mudar categoria
+      if (msg.startsWith("categoria") || msg.includes("categoria é")) {
+        const raw = msg.replace("categoria", "").replace("é", "").trim();
+        const { best } = findBestCategory(raw, updated.type);
+        updated.category_name = best || "Outros / Diversos";
+        return res.status(200).json({
+          reply: formatConfirmation(updated),
+          action: "awaiting_confirmation",
+          data: updated
+        });
       }
 
-      // 2.2) MUDAR CATEGORIA (COM RACIOCÍNIO)
-      if (
-        text.startsWith("categoria") ||
-        text.includes("muda categoria") ||
-        text.includes("troca categoria") ||
-        text.includes("é categoria")
-      ) {
-        // Remove comandos para pegar só o "conteúdo"
-        const rawCategory = text
-          .replace("categoria é", "")
-          .replace("categoria", "")
-          .replace("muda", "")
-          .replace("troca", "")
-          .trim();
-
-        if (rawCategory.length > 0) {
-          // Busca a categoria nativa correspondente
-          const { bestMatch } = findBestCategory(rawCategory, updated.type);
-          updated.category_name = bestMatch || rawCategory;
-          return sendConfirmation(res, updated);
-        }
+      // mudar conta
+      if (msg.includes("conta")) {
+        updated.account_name = msg.replace("conta", "").trim();
+        return res.status(200).json({
+          reply: formatConfirmation(updated),
+          action: "awaiting_confirmation",
+          data: updated
+        });
       }
 
-      // Usuário mandou só o nome da categoria solto (ex: "Alimentação")
-      if (
-        text.split(" ").length <= 3 &&
-        !["sim", "não", "nao", "ok", "confirmar", "cancelar"].includes(text) &&
-        !text.includes("conta") &&
-        !text.includes("descrição")
-      ) {
-        // Tenta ver se é uma categoria válida
-        const { bestMatch, score } = findBestCategory(text, updated.type);
-        if (score > 0) {
-            updated.category_name = bestMatch;
-            return sendConfirmation(res, updated);
-        }
+      // mudar valor
+      const n = Number(msg.replace(",", "."));
+      if (!isNaN(n) && n > 0) {
+        updated.amount = n;
+        return res.status(200).json({
+          reply: formatConfirmation(updated),
+          action: "awaiting_confirmation",
+          data: updated
+        });
       }
 
-      // 2.3) MUDAR CONTA
-      if (text.includes("conta") || text.includes("carteira") || text.includes("banco")) {
-        const newAcc = text
-          .replace(/conta|troca|muda|usa|carteira|banco|no|na/g, "")
-          .trim();
-        if (newAcc.length > 0) {
-          updated.account_name = newAcc;
-          return sendConfirmation(res, updated);
-        }
-      }
-
-      // 2.4) MUDAR DESCRIÇÃO
-      if (text.includes("descrição") || text.includes("descricao")) {
-        const newDesc = text
-          .replace(/descrição|descricao|muda|troca|é/g, "")
-          .trim();
-        if (newDesc.length > 0) {
-          updated.description = newDesc;
-          return sendConfirmation(res, updated);
-        }
+      // mudar descrição
+      if (msg.includes("descrição") || msg.includes("descricao")) {
+        updated.description = msg.replace("descrição", "").replace("descricao", "").trim();
+        return res.status(200).json({
+          reply: formatConfirmation(updated),
+          action: "awaiting_confirmation",
+          data: updated
+        });
       }
     }
 
-    // ======================================================================
-    // 3) INTENÇÃO DO USUÁRIO
-    // ======================================================================
-    const intent = detectIntent(msgLower);
+    // 📌 Intenção
+    const intent = detectIntent(msg);
 
     if (intent.type === "cancel") {
       return res.status(200).json({ reply: "Cancelado 👍", action: "cancelled" });
@@ -268,13 +440,15 @@ export default async function handler(req, res) {
     }
 
     if (intent.type === "query") {
-      return res.status(200).json({ reply: intent.reply, action: intent.action, data: intent.data || {} });
+      return res.status(200).json({
+        reply: intent.reply,
+        action: intent.action,
+        data: intent.data || {}
+      });
     }
 
-    // ======================================================================
-    // 4) EXTRAÇÃO DE NOVA TRANSAÇÃO
-    // ======================================================================
-    const parsed = extractTransaction(msgLower);
+    // 🆕 Nova transação
+    const parsed = extractTransaction(msg);
 
     if (parsed.needsMoreInfo) {
       return res.status(200).json({
@@ -294,200 +468,10 @@ export default async function handler(req, res) {
     });
 
   } catch (err) {
-    console.error("Erro:", err);
-    return res.status(500).json({ reply: "Erro técnico 😕", action: "error" });
-  }
-}
-
-// ======================================================================
-// 🧠 LÓGICA DE INTELIGÊNCIA DE CATEGORIAS
-// ======================================================================
-
-function findBestCategory(text, type = "expense") {
-  // Seleciona a lista certa (despesa ou receita)
-  const list = CATEGORY_MAP[type] || CATEGORY_MAP.expense;
-  
-  let bestMatch = null;
-  let maxScore = 0;
-  let candidates = [];
-
-  // 1. Normalização
-  const cleanText = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-  list.forEach(cat => {
-    let score = 0;
-    const catName = cat.name.toLowerCase();
-    
-    // Match Exato no nome
-    if (cleanText === catName) score += 100;
-    else if (cleanText.includes(catName)) score += 50;
-
-    // Match nas Keywords
-    cat.keywords.forEach(word => {
-        const cleanWord = word.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        if (cleanText.includes(cleanWord)) {
-            // Palavras maiores valem mais para evitar falsos positivos curtos
-            score += 20 + (cleanWord.length * 2);
-        }
+    console.error("ERRO:", err);
+    return res.status(500).json({
+      reply: "Erro técnico 😕",
+      action: "error"
     });
-
-    if (score > 0) {
-      candidates.push({ name: cat.name, score });
-      if (score > maxScore) {
-        maxScore = score;
-        bestMatch = cat.name;
-      }
-    }
-  });
-
-  // Ordena candidatos por score
-  candidates.sort((a, b) => b.score - a.score);
-
-  // Retorna o melhor, e uma lista de top 3 sugestões se houver ambiguidade
-  const suggestions = candidates.slice(0, 3).map(c => c.name);
-
-  return { bestMatch, score: maxScore, suggestions };
-}
-
-// ======================================================================
-// AUXILIARES
-// ======================================================================
-
-function sendConfirmation(res, data) {
-  // Limpa missing_field para evitar loop
-  const responseData = { ...data, missing_field: null };
-  return res.status(200).json({
-    reply: formatConfirmation(data),
-    action: "awaiting_confirmation",
-    data: responseData
-  });
-}
-
-function detectIntent(msg) {
-  if (/^(cancelar|cancela|esquece)$/.test(msg)) return { type: "cancel" };
-  if (/^(sim|ok|confirmo|tá certo)$/.test(msg)) return { type: "confirm" };
-  
-  // Queries simples
-  if (/saldo/.test(msg)) return { type: "query", action: "query_balance", reply: "Calculando saldo..." };
-  if (/gastei hoje/.test(msg)) return { type: "query", action: "query_spent_today", reply: "Vendo gastos de hoje..." };
-  
-  if (/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi)/.test(msg)) return { type: "transaction" };
-  
-  return { type: "general" };
-}
-
-function extractTransaction(msg) {
-  const wallets = globalContext.wallets || [];
-  
-  // 1. Detectar Tipo
-  const type = /(recebi|ganhei|entrou|salario|venda)/.test(msg) ? "income" : "expense";
-
-  // 2. Detectar Valor
-  const amountMatch = msg.match(/(\d+[.,]?\d*)/);
-  const amount = amountMatch ? Number(amountMatch[1].replace(",", ".")) : null;
-
-  // 3. Detectar Frequência
-  const isFixed = /(fixo|fixa|mensal|recorrente)/i.test(msg);
-  const frequency = isFixed ? "fixed" : "variable";
-
-  // 4. Descrição Limpa
-  const description = inferDescription(msg);
-
-  // 5. Detectar Conta
-  const account = inferWallet(description, wallets);
-
-  // 6. Detectar Categoria (AI Logic)
-  const { bestMatch, suggestions, score } = findBestCategory(description, type);
-
-  const partial = {
-    type,
-    amount,
-    description,
-    account_name: account,
-    category_name: bestMatch, // Pode ser null se score for baixo
-    frequency
-  };
-
-  // --- Validações ---
-
-  if (!amount) {
-    return {
-      needsMoreInfo: true,
-      missingField: "amount",
-      reply: `Qual o valor de *${description}*? 💰`,
-      partial
-    };
   }
-
-  if (!account) {
-    const list = wallets.map(w => `• ${w.name}`).join("\n");
-    return {
-      needsMoreInfo: true,
-      missingField: "account_name",
-      reply: `De qual conta? 💳\n\n${list || "• Carteira"}`,
-      partial
-    };
-  }
-
-  // Lógica de Ambiguidade da Categoria
-  if (!bestMatch) {
-    // Se não achou nada ou está confuso, pergunta usando as sugestões
-    let replyText = "Qual categoria seria?";
-    
-    if (suggestions && suggestions.length > 0) {
-       replyText = `Qual seria a categoria que melhor se encaixa a esse lançamento?\n\n` + 
-                   suggestions.map(s => `• ${s}`).join("\n");
-    } else {
-        // Fallback genérico se não tiver sugestão
-        const genericList = type === 'expense' 
-            ? "• Alimentação\n• Transporte\n• Lazer" 
-            : "• Salário\n• Extras";
-        replyText = `Qual seria a categoria?\n${genericList}`;
-    }
-
-    return {
-      needsMoreInfo: true,
-      missingField: "category_name",
-      reply: replyText,
-      partial
-    };
-  }
-
-  // Se chegou aqui, temos tudo
-  return {
-    needsMoreInfo: false,
-    fullData: partial,
-    confirmation: formatConfirmation(partial)
-  };
-}
-
-function formatConfirmation(data) {
-  const amount = Number(data.amount || 0);
-  const emoji = data.type === "expense" ? "🔴 Despesa" : "🟢 Receita";
-  const freq = data.frequency === "fixed" ? "Fixa" : "Variável";
-  const today = new Date().toLocaleDateString("pt-BR");
-
-  return `${emoji} | 📅 ${freq}
-💰 Valor: R$ ${amount.toFixed(2)}
-📝 Descrição: ${data.description || "-"}
-💳 Conta: ${data.account_name || "-"}
-📁 Categoria: ${data.category_name || "-"}
-_${today}_
-
-Confirma? (Sim/Não)`;
-}
-
-function inferDescription(msg) {
-  return msg
-    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/gi, "")
-    .replace(/(\d+[.,]?\d*)/g, "")
-    .replace(/(fixo|fixa|mensal|recorrente)/gi, "")
-    .trim() || "Lançamento";
-}
-
-function inferWallet(desc, wallets) {
-  if (!wallets || wallets.length === 0) return null;
-  const d = desc.toLowerCase();
-  const found = wallets.find(w => d.includes(w.name.toLowerCase()));
-  return found ? found.name : null;
 }
