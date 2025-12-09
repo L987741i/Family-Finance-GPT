@@ -1,101 +1,112 @@
-// /api/chat.js — versão FINAL com conta + categoria obrigatórias e data ✨
-// 100% compatível com Vercel Serverless (ESM)
+// /api/chat.js — IA completa integrada com Lovable
+// Compatível com Vercel (ESM)
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    res.status(405).json({ error: "Method not allowed" });
-    return;
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
     const { message, context } = req.body || {};
 
-    if (!message || typeof message !== "string") {
-      res.status(200).json({
-        reply: "Hmm… não entendi 🤔 Pode tentar dizer de outro jeito?",
+    globalContext = context || {};
+    const pending = context?.pending_transaction || null;
+    const missing = context?.missing_field || null;
+
+    if (!message) {
+      return res.status(200).json({
+        reply: "Não entendi muito bem 🤔\nPode repetir?",
         action: "message"
       });
-      return;
     }
 
+    // ===============================
+    // 1) CONTINUAÇÃO DE INFORMAÇÃO
+    // ===============================
+    if (pending && missing) {
+      const updated = { ...pending };
+
+      // preenche campo faltante
+      if (missing === "account_name") {
+        updated.account_name = message.toLowerCase();
+      }
+      if (missing === "category_name") {
+        updated.category_name = message.toLowerCase();
+      }
+      if (missing === "amount") {
+        updated.amount = parseFloat(message.replace(",", "."));
+      }
+
+      const confirmation = formatConfirmation(updated);
+
+      return res.status(200).json({
+        reply: confirmation,
+        action: "awaiting_confirmation",
+        data: updated
+      });
+    }
+
+    // ===============================
+    // 2) DETECÇÃO DE INTENÇÃO
+    // ===============================
     const intent = detectIntent(message);
 
-    // CANCELAR
     if (intent.type === "cancel") {
-      res.status(200).json({
-        reply: "Tudo bem, operação cancelada 👍",
+      return res.status(200).json({
+        reply: "Tudo certo 👍\nOperação cancelada!",
         action: "cancelled"
       });
-      return;
     }
 
-    // CONSULTAS
+    if (intent.type === "confirm") {
+      if (!pending) {
+        return res.status(200).json({
+          reply: "Não encontrei nada para confirmar 🤔",
+          action: "message"
+        });
+      }
+
+      return res.status(200).json({
+        reply: "Perfeito! Registrando agora 🚀",
+        action: "success",
+        data: pending
+      });
+    }
+
     if (intent.type === "query") {
-      res.status(200).json({
+      return res.status(200).json({
         reply: intent.reply,
         action: intent.action,
         data: intent.data || {}
       });
-      return;
     }
 
-    // CONFIRMAR
-    if (intent.type === "confirm") {
-      const pending = context?.pending_transaction;
+    // ===============================
+    // 3) PROCESSAR TRANSAÇÃO NOVA
+    // ===============================
+    const parsed = extractTransaction(message);
 
-      if (!pending) {
-        res.status(200).json({
-          reply: "Não encontrei nada pra confirmar 🤔 Me diga novamente?",
-          action: "message"
-        });
-        return;
-      }
-
-      res.status(200).json({
-        reply: "Perfeito! Vou registrar isso agora 🎯",
-        action: "success",
-        data: pending
+    if (parsed.needsMoreInfo) {
+      return res.status(200).json({
+        reply: parsed.reply,
+        action: "need_more_info",
+        data: {
+          missing_field: parsed.missingField,
+          partial_data: parsed.partial
+        }
       });
-      return;
     }
 
-    // NOVA TRANSAÇÃO
-    if (intent.type === "transaction") {
-      const parsed = extractTransaction(message);
-
-      if (parsed.needsMoreInfo) {
-        res.status(200).json({
-          reply: parsed.reply,
-          action: "need_more_info",
-          data: parsed.data
-        });
-        return;
-      }
-
-      res.status(200).json({
-        reply: parsed.confirmation,
-        action: "awaiting_confirmation",
-        data: parsed.fullData
-      });
-      return;
-    }
-
-    // GENÉRICO
-    res.status(200).json({
-      reply:
-        "Oi! Sou sua IA financeira ✨\n" +
-        "Pode me enviar algo como:\n" +
-        "• “paguei 20 no lanche”\n" +
-        "• “recebi 120 de salário”\n" +
-        "• “quanto gastei hoje?”\n",
-      action: "message"
+    return res.status(200).json({
+      reply: parsed.confirmation,
+      action: "awaiting_confirmation",
+      data: parsed.fullData
     });
 
   } catch (err) {
-    console.error("Erro IA externa:", err);
-
-    res.status(500).json({
-      reply: "Ops! Tive um problema técnico 😕 Tenta novamente?",
+    console.error("Erro:", err);
+    return res.status(500).json({
+      reply: "Tive um problema técnico 😕\nPode tentar novamente?",
       action: "error",
       details: String(err)
     });
@@ -103,219 +114,172 @@ export default async function handler(req, res) {
 }
 
 
+// ========================================================================
+// INTENT DETECTION
+// ========================================================================
 
-// ============================================================
-// CONFIGURAÇÕES
-// ============================================================
-const FAMILY_ACCOUNTS = ["carteira", "nubank", "bb", "itau", "caixa"];
-const CATEGORY_LIST = [
-  "Alimentação",
-  "Transporte",
-  "Saúde",
-  "Casa",
-  "Lazer",
-  "Educação",
-  "Mercado",
-  "Outros"
-];
+function detectIntent(msg) {
+  msg = msg.toLowerCase().trim();
 
+  if (/(cancelar|cancela|esquece|deixa pra lá)/.test(msg)) {
+    return { type: "cancel" };
+  }
 
-
-// ============================================================
-// DETECTAR INTENÇÃO
-// ============================================================
-function detectIntent(message) {
-  const msg = message.toLowerCase().trim();
-
-  if (/(cancelar|cancela|esquece)/.test(msg)) return { type: "cancel" };
-
-  if (/^(sim|confirmo|ok|pode|pode registrar)$/.test(msg))
+  if (/^(sim|pode|ok|confirmo)$/.test(msg)) {
     return { type: "confirm" };
+  }
 
-  if (/quanto gastei hoje/.test(msg))
+  if (/quanto gastei hoje/.test(msg)) {
     return {
       type: "query",
       action: "query_spent_today",
-      reply: "Claro! Vou verificar seus gastos de hoje 💸"
+      reply: "Já vou ver seus gastos de hoje 💸"
     };
+  }
 
-  if (/gastei no mês|gastos do mês/.test(msg)) {
+  if (/(gastei na semana|gastos da semana)/.test(msg)) {
+    return {
+      type: "query",
+      action: "query_spent_week",
+      reply: "Vou ver sua semana financeira 📅"
+    };
+  }
+
+  if (/(gastei no mês|gastos do mês)/.test(msg)) {
     const now = new Date();
     return {
       type: "query",
       action: "query_spent_month",
-      reply: "Beleza! Vou analisar seu mês 📊",
+      reply: "Conferindo seus gastos do mês 📊",
       data: { month: now.getMonth() + 1, year: now.getFullYear() }
     };
   }
 
-  if (/saldo|minhas finanças/.test(msg))
+  if (/saldo/.test(msg)) {
     return {
       type: "query",
       action: "query_balance",
-      reply: "Vou calcular seu saldo geral 💼✨"
+      reply: "Calculando seu saldo geral 💼"
     };
+  }
 
-  if (/(paguei|gastei|comprei|usei|recebi|entrou|ganhei)/.test(msg))
+  if (/(paguei|gastei|comprei|recebi|ganhei|entrou)/.test(msg)) {
     return { type: "transaction" };
+  }
 
   return { type: "general" };
 }
 
 
+// ========================================================================
+// PROCESSAMENTO DE TRANSAÇÕES
+// ========================================================================
 
-// ============================================================
-// EXTRAIR A TRANSAÇÃO
-// ============================================================
 function extractTransaction(message) {
   const msg = message.toLowerCase();
+  const wallets = globalContext.wallets || [];
+  const categories = globalContext.categories || [];
 
-  // Tipo
   const type =
     /(recebi|ganhei|entrou)/.test(msg)
       ? "income"
-      : /(paguei|gastei|comprei|usei|dei)/.test(msg)
+      : /(paguei|gastei|comprei|custou)/.test(msg)
       ? "expense"
       : null;
 
-  // Valor
   const amountMatch = msg.match(/(\d+[.,]?\d*)/);
   const amount = amountMatch ? parseFloat(amountMatch[1].replace(",", ".")) : null;
 
-  // Descrição
   const description = inferDescription(msg);
+  const account = inferWallet(description, wallets);
+  const category = inferCategory(description, categories);
 
-  // Método de pagamento
-  const payment_method = inferPaymentMethod(msg);
-
-  // Parcelas
-  const installments = inferInstallments(msg);
-
-  // Conta (pode faltar)
-  const account_name = inferAccount(msg);
-
-  // Categoria (pode faltar)
-  const category_name = inferCategory(description);
-
-  // Data
-  const date = inferDate(msg);
-
-  // 1️⃣ Faltou valor
-  if (!amount) {
-    return {
-      needsMoreInfo: true,
-      reply: `Perfeito! Só me diz o valor de *${description}* 💵`,
-      data: { missing_field: "amount" }
-    };
-  }
-
-  // 2️⃣ Faltou conta → sempre perguntar!
-  if (!account_name) {
-    return {
-      needsMoreInfo: true,
-      reply:
-        "Só mais uma coisa 😉 Qual conta você usou?\n\n" +
-        "Contas disponíveis:\n" +
-        FAMILY_ACCOUNTS.map(acc => `• ${acc}`).join("\n"),
-      data: { missing_field: "account_name" }
-    };
-  }
-
-  // 3️⃣ Faltou categoria → perguntar sempre
-  if (!category_name || category_name === "Outros") {
-    return {
-      needsMoreInfo: true,
-      reply:
-        "E qual categoria melhor representa esse lançamento? 🗂️\n\n" +
-        CATEGORY_LIST.map(c => `• ${c}`).join("\n"),
-      data: { missing_field: "category_name" }
-    };
-  }
-
-  // Dados completos
-  const fullData = {
+  const partial = {
     type,
     amount,
     description,
-    payment_method,
-    installments,
-    account_name,
-    category_name,
-    date,
+    account_name: account,
+    category_name: category,
     frequency: "variable"
   };
 
-  // Confirmação
-  const confirmation =
-    `Vamos revisar tudo 👇\n\n` +
-    `🔴 Tipo: ${type === "expense" ? "Despesa" : "Entrada"}\n` +
-    `💰 Valor: R$ ${amount.toFixed(2)}\n` +
-    `📝 Descrição: ${description}\n` +
-    `💳 Conta: ${account_name}\n` +
-    `📁 Categoria: ${category_name}\n` +
-    `📅 Data: ${date}\n\n` +
-    `Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
+  if (!amount) {
+    return {
+      needsMoreInfo: true,
+      missingField: "amount",
+      reply: `Qual foi o valor de *${description}*? 💰`,
+      partial
+    };
+  }
+
+  if (!type) {
+    return {
+      needsMoreInfo: true,
+      missingField: "type",
+      reply: "Isso foi entrada ou saída? 🤔",
+      partial
+    };
+  }
+
+  if (!account) {
+    const list = wallets.map(w => `• ${w.name}`).join("\n");
+    return {
+      needsMoreInfo: true,
+      missingField: "account_name",
+      reply: `Só mais uma coisa 😉 Qual conta você usou?\n\nContas disponíveis:\n${list}`,
+      partial
+    };
+  }
+
+  const fullData = partial;
 
   return {
     needsMoreInfo: false,
     fullData,
-    confirmation
+    confirmation: formatConfirmation(fullData)
   };
 }
 
 
+// ========================================================================
+// FORMATAÇÃO DA CONFIRMAÇÃO
+// ========================================================================
 
-// ============================================================
-// HELPER FUNCTIONS
-// ============================================================
+function formatConfirmation(data) {
+  const emoji = data.type === "expense" ? "🔴 *Despesa*" : "🟢 *Receita*";
+
+  const today = new Date().toLocaleDateString("pt-BR");
+
+  return `${emoji} | 📅 Variável
+💰 *Valor*: R$ ${data.amount.toFixed(2)}
+📝 *Descrição*: ${data.description}
+💳 *Conta*: ${data.account_name}
+📁 *Categoria*: ${data.category_name || "Selecionar"}
+_${today}_
+
+Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
+}
+
+
+// ========================================================================
+// HELPERS
+// ========================================================================
+
 function inferDescription(msg) {
-  const clean = msg
-    .replace(/(paguei|gastei|comprei|usei|dei|recebi|ganhei|entrou)/g, "")
+  return msg
+    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou)/g, "")
     .replace(/(\d+[.,]?\d*)/g, "")
-    .replace(/(pix|debito|débito|credito|crédito|cartão)/g, "")
-    .trim();
-
-  return clean || "Lançamento";
+    .trim() || "Lançamento";
 }
 
-function inferPaymentMethod(msg) {
-  if (/pix|dinheiro|débito|debito/.test(msg)) return "account";
-  if (/cart[aã]o/.test(msg) && /\d+x/.test(msg)) return "credit_card_installments";
-  if (/cart[aã]o|cr[eé]dito/.test(msg)) return "credit_card_cash";
-  return "account";
+function inferWallet(desc, wallets) {
+  desc = desc.toLowerCase();
+  return wallets.find(w => desc.includes(w.name.toLowerCase()))?.name || null;
 }
 
-function inferInstallments(msg) {
-  const match = msg.match(/(\d+)x/);
-  return match ? parseInt(match[1]) : null;
+function inferCategory(desc, categories) {
+  desc = desc.toLowerCase();
+  return categories.find(c => desc.includes(c.name.toLowerCase()))?.name || null;
 }
 
-function inferAccount(msg) {
-  for (const acc of FAMILY_ACCOUNTS) {
-    if (msg.includes(acc)) return acc;
-  }
-  return null; // força a IA a perguntar
-}
-
-function inferCategory(desc) {
-  if (/lanche|comida|almoço|janta/.test(desc)) return "Alimentação";
-  if (/mercado|supermercado/.test(desc)) return "Mercado";
-  if (/uber|gasolina|combustivel/.test(desc)) return "Transporte";
-  if (/farmacia|remedio/.test(desc)) return "Saúde";
-  return null; // força perguntar categoria
-}
-
-function inferDate(msg) {
-  const now = new Date();
-
-  if (msg.includes("hoje")) return now.toISOString().slice(0, 10);
-  if (msg.includes("agora")) return now.toISOString().slice(0, 10);
-
-  if (msg.includes("ontem")) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
-  }
-
-  return now.toISOString().slice(0, 10);
-}
+let globalContext = {};
