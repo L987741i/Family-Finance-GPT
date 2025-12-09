@@ -1,5 +1,8 @@
-// /api/chat.js — IA completa integrada com Lovable
+// /api/chat.js — IA Financeira integrada ao Lovable
+// Versão com categorização automática baseada nas categorias do usuário
 // Compatível com Vercel (ESM)
+
+let globalContext = {};
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -8,8 +11,8 @@ export default async function handler(req, res) {
 
   try {
     const { message, context } = req.body || {};
-
     globalContext = context || {};
+
     const pending = context?.pending_transaction || null;
     const missing = context?.missing_field || null;
 
@@ -20,21 +23,33 @@ export default async function handler(req, res) {
       });
     }
 
-    // ===============================
-    // 1) CONTINUAÇÃO DE INFORMAÇÃO
-    // ===============================
+    // ======================================================
+    // 1) CONTINUAÇÃO (quando falta campo)
+    // ======================================================
     if (pending && missing) {
       const updated = { ...pending };
 
-      // preenche campo faltante
-      if (missing === "account_name") {
-        updated.account_name = message.toLowerCase();
-      }
-      if (missing === "category_name") {
-        updated.category_name = message.toLowerCase();
-      }
       if (missing === "amount") {
-        updated.amount = parseFloat(message.replace(",", "."));
+        const parsed = Number(message.replace(",", "."));
+        if (!parsed || isNaN(parsed)) {
+          return res.status(200).json({
+            reply: "Informe um valor numérico válido 💰",
+            action: "need_more_info",
+            data: {
+              missing_field: "amount",
+              partial_data: updated
+            }
+          });
+        }
+        updated.amount = parsed;
+      }
+
+      if (missing === "account_name") {
+        updated.account_name = message.trim().toLowerCase();
+      }
+
+      if (missing === "category_name") {
+        updated.category_name = message.trim().toLowerCase();
       }
 
       const confirmation = formatConfirmation(updated);
@@ -46,14 +61,15 @@ export default async function handler(req, res) {
       });
     }
 
-    // ===============================
-    // 2) DETECÇÃO DE INTENÇÃO
-    // ===============================
+    // ======================================================
+    // 2) DETECTAR INTENÇÃO
+    // ======================================================
+
     const intent = detectIntent(message);
 
     if (intent.type === "cancel") {
       return res.status(200).json({
-        reply: "Tudo certo 👍\nOperação cancelada!",
+        reply: "Tudo certo 👍 Operação cancelada!",
         action: "cancelled"
       });
     }
@@ -81,9 +97,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // ===============================
-    // 3) PROCESSAR TRANSAÇÃO NOVA
-    // ===============================
+    // ======================================================
+    // 3) NOVA TRANSAÇÃO
+    // ======================================================
     const parsed = extractTransaction(message);
 
     if (parsed.needsMoreInfo) {
@@ -103,25 +119,26 @@ export default async function handler(req, res) {
       data: parsed.fullData
     });
 
-  } catch (err) {
-    console.error("Erro:", err);
+  } catch (error) {
+    console.error("Erro na IA:", error);
     return res.status(500).json({
-      reply: "Tive um problema técnico 😕\nPode tentar novamente?",
+      reply: "Tive um problema inesperado 😕 Tente novamente.",
       action: "error",
-      details: String(err)
+      details: String(error)
     });
   }
 }
 
-
-// ========================================================================
-// INTENT DETECTION
-// ========================================================================
+//
+// ======================================================
+// DETECÇÃO DE INTENÇÃO
+// ======================================================
+//
 
 function detectIntent(msg) {
   msg = msg.toLowerCase().trim();
 
-  if (/(cancelar|cancela|esquece|deixa pra lá)/.test(msg)) {
+  if (/^(cancelar|cancela|esquece|deixa pra lá)$/.test(msg)) {
     return { type: "cancel" };
   }
 
@@ -133,24 +150,24 @@ function detectIntent(msg) {
     return {
       type: "query",
       action: "query_spent_today",
-      reply: "Já vou ver seus gastos de hoje 💸"
+      reply: "Vou verificar seus gastos de hoje 💸"
     };
   }
 
-  if (/(gastei na semana|gastos da semana)/.test(msg)) {
+  if (/gastei na semana/.test(msg)) {
     return {
       type: "query",
       action: "query_spent_week",
-      reply: "Vou ver sua semana financeira 📅"
+      reply: "Vou conferir sua semana financeira 📅"
     };
   }
 
-  if (/(gastei no mês|gastos do mês)/.test(msg)) {
+  if (/gastei no mês/.test(msg)) {
     const now = new Date();
     return {
       type: "query",
       action: "query_spent_month",
-      reply: "Conferindo seus gastos do mês 📊",
+      reply: "Consultando gastos do mês 📊",
       data: { month: now.getMonth() + 1, year: now.getFullYear() }
     };
   }
@@ -170,13 +187,15 @@ function detectIntent(msg) {
   return { type: "general" };
 }
 
-
-// ========================================================================
+//
+// ======================================================
 // PROCESSAMENTO DE TRANSAÇÕES
-// ========================================================================
+// ======================================================
+//
 
 function extractTransaction(message) {
   const msg = message.toLowerCase();
+
   const wallets = globalContext.wallets || [];
   const categories = globalContext.categories || [];
 
@@ -188,9 +207,10 @@ function extractTransaction(message) {
       : null;
 
   const amountMatch = msg.match(/(\d+[.,]?\d*)/);
-  const amount = amountMatch ? parseFloat(amountMatch[1].replace(",", ".")) : null;
+  const amount = amountMatch ? Number(amountMatch[1].replace(",", ".")) : null;
 
   const description = inferDescription(msg);
+
   const account = inferWallet(description, wallets);
   const category = inferCategory(description, categories);
 
@@ -231,6 +251,16 @@ function extractTransaction(message) {
     };
   }
 
+  if (!category) {
+    const list = categories.map(c => `• ${c.name}`).join("\n");
+    return {
+      needsMoreInfo: true,
+      missingField: "category_name",
+      reply: `Certo! Agora escolha uma categoria:\n\n${list}`,
+      partial
+    };
+  }
+
   const fullData = partial;
 
   return {
@@ -240,36 +270,36 @@ function extractTransaction(message) {
   };
 }
 
-
-// ========================================================================
+//
+// ======================================================
 // FORMATAÇÃO DA CONFIRMAÇÃO
-// ========================================================================
+// ======================================================
+//
 
 function formatConfirmation(data) {
-  // segurança: se amount não existir, não usar toFixed
   if (!data.amount || isNaN(Number(data.amount))) {
-    return `Só mais uma coisa 😉\nQual é o *valor* desse lançamento?\n\nExemplo: 20, 35.90, 120`;
+    return `Só mais uma coisa 😉\nQual é o *valor* do lançamento?\n\nExemplos: 20, 35.90, 120`;
   }
 
   const amount = Number(data.amount);
-  const typeEmoji = data.type === "expense" ? "🔴 *Despesa*" : "🟢 *Receita*";
-
+  const emoji = data.type === "expense" ? "🔴 *Despesa*" : "🟢 *Receita*";
   const today = new Date().toLocaleDateString("pt-BR");
 
-  return `${typeEmoji} | 📅 Variável
+  return `${emoji} | 📅 Variável
 💰 *Valor*: R$ ${amount.toFixed(2)}
-📝 *Descrição*: ${data.description || "Sem descrição"}
-💳 *Conta*: ${data.account_name || "Selecionar"}
-📁 *Categoria*: ${data.category_name || "Selecionar"}
+📝 *Descrição*: ${data.description}
+💳 *Conta*: ${data.account_name}
+📁 *Categoria*: ${data.category_name}
 _${today}_
 
 Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
 }
 
-
-// ========================================================================
-// HELPERS
-// ========================================================================
+//
+// ======================================================
+// HELPERS: DESCRIÇÃO / CONTA / CATEGORIA
+// ======================================================
+//
 
 function inferDescription(msg) {
   return msg
@@ -279,42 +309,45 @@ function inferDescription(msg) {
 }
 
 function inferWallet(desc, wallets) {
-  desc = desc.toLowerCase();
-  return wallets.find(w => desc.includes(w.name.toLowerCase()))?.name || null;
+  const d = desc.toLowerCase();
+  return wallets.find(w => d.includes(w.name.toLowerCase()))?.name || null;
 }
 
+/**
+ * INFERÊNCIA DE CATEGORIA — versão inteligente
+ * Usa:
+ * 1) correspondência direta
+ * 2) palavras-chave mapeadas
+ * 3) fallback por similaridade parcial
+ */
 function inferCategory(desc, categories) {
   if (!categories || categories.length === 0) return null;
 
   const text = desc.toLowerCase();
 
-  // 1) TENTAR ENCONTRAR A CATEGORIA PELO NOME EXATO
-  for (const cat of categories) {
-    if (text.includes(cat.name.toLowerCase())) {
-      return cat.name;
-    }
-  }
+  // 1) MATCH DIRETO
+  const direct = categories.find(c => text.includes(c.name.toLowerCase()));
+  if (direct) return direct.name;
 
-  // 2) PALAVRAS-CHAVE PADRÃO PARA TIPOS DE CATEGORIA
-  const keywords = [
-    { words: ["pão", "padaria", "comida", "almoço", "jantar", "lanche", "mercado", "supermercado"], cat: "alimentação" },
-    { words: ["uber", "gasolina", "ônibus", "carro"], cat: "transporte" },
-    { words: ["luz", "água", "conta", "internet", "telefone"], cat: "contas mensais" },
-    { words: ["farmácia", "remédio", "cura", "dor"], cat: "saúde" },
-    { words: ["roupa", "sapato", "loja"], cat: "vestuário" }
+  // 2) PALAVRAS-CHAVE → CATEGORIA
+  const keywordMap = [
+    { words: ["pão", "lanche", "comida", "almoço", "jantar", "feira", "mercado"], cat: "Alimentação" },
+    { words: ["uber", "ônibus", "gasolina", "combustível"], cat: "Transporte" },
+    { words: ["luz", "água", "internet", "telefone"], cat: "Contas Essenciais" },
+    { words: ["remédio", "farmácia", "dor"], cat: "Saúde" },
+    { words: ["roupa", "camisa", "sapato"], cat: "Vestuário" },
+    { words: ["curso", "escola", "apostila"], cat: "Educação" },
+    { words: ["cinema", "viagem", "lazer"], cat: "Lazer" }
   ];
 
-  // 3) VERIFICAR PALAVRAS-CHAVE
-  for (const group of keywords) {
+  for (const group of keywordMap) {
     if (group.words.some(w => text.includes(w))) {
-      const found = categories.find(c => c.name.toLowerCase() === group.cat);
+      const found = categories.find(c => c.name.toLowerCase() === group.cat.toLowerCase());
       if (found) return found.name;
     }
   }
 
-  // 4) NENHUMA ENCONTRADA → null
-  return null;
+  // 3) FALLBACK → pega primeira categoria do tipo "expense"
+  const fallback = categories.find(c => c.type === "expense");
+  return fallback ? fallback.name : null;
 }
-
-
-let globalContext = {};
