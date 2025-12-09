@@ -26,82 +26,40 @@ export default async function handler(req, res) {
     // ======================================================
     // 1) CONTINUAÇÃO (quando falta campo)
     // ======================================================
-    // ======================================================
-// 1.5) ALTERAÇÕES DO USUÁRIO NA CONFIRMAÇÃO
-// ======================================================
-if (pending && !missing) {
+    if (pending && missing) {
+      const updated = { ...pending };
 
-  const lower = message.toLowerCase();
+      if (missing === "amount") {
+        const parsed = Number(message.replace(",", "."));
+        if (!parsed || isNaN(parsed)) {
+          return res.status(200).json({
+            reply: "Informe um valor numérico válido 💰",
+            action: "need_more_info",
+            data: {
+              missing_field: "amount",
+              partial_data: updated
+            }
+          });
+        }
+        updated.amount = parsed;
+      }
 
-  // ======== ALTERAR CATEGORIA ========
-  if (lower.startsWith("categoria é ") || lower.startsWith("categoria ") || lower.includes("categoria")) {
-    const newCat = lower.replace("categoria é", "").replace("categoria", "").trim();
+      if (missing === "account_name") {
+        updated.account_name = message.trim().toLowerCase();
+      }
 
-    pending.category_name = newCat;
+      if (missing === "category_name") {
+        updated.category_name = message.trim().toLowerCase();
+      }
 
-    const confirmation = formatConfirmation(pending);
+      const confirmation = formatConfirmation(updated);
 
-    return res.status(200).json({
-      reply: confirmation,
-      action: "awaiting_confirmation",
-      data: pending
-    });
-  }
-
-  // ======== ALTERAR CONTA ========
-  if (lower.startsWith("conta é ") || lower.startsWith("conta ") || lower.includes("conta")) {
-    const newAcc = lower.replace("conta é", "").replace("conta", "").trim();
-
-    pending.account_name = newAcc;
-
-    const confirmation = formatConfirmation(pending);
-
-    return res.status(200).json({
-      reply: confirmation,
-      action: "awaiting_confirmation",
-      data: pending
-    });
-  }
-
-  // ======== ALTERAR VALOR ========
-  if (lower.startsWith("valor ") || lower.startsWith("valor é")) {
-    const num = Number(lower.replace("valor", "").replace("é", "").replace(",", ".").trim());
-
-    if (!num || isNaN(num)) {
       return res.status(200).json({
-        reply: "Informe um valor numérico válido 💰",
-        action: "need_more_info",
-        data: { missing_field: "amount", partial_data: pending }
+        reply: confirmation,
+        action: "awaiting_confirmation",
+        data: updated
       });
     }
-
-    pending.amount = num;
-
-    const confirmation = formatConfirmation(pending);
-
-    return res.status(200).json({
-      reply: confirmation,
-      action: "awaiting_confirmation",
-      data: pending
-    });
-  }
-
-  // ======== ALTERAR DESCRIÇÃO ========
-  if (lower.startsWith("descrição ") || lower.startsWith("descricao ") || lower.includes("descrição")) {
-    const newDesc = lower.replace("descrição", "").replace("descricao", "").replace("é", "").trim();
-
-    pending.description = newDesc;
-
-    const confirmation = formatConfirmation(pending);
-
-    return res.status(200).json({
-      reply: confirmation,
-      action: "awaiting_confirmation",
-      data: pending
-    });
-  }
-}
-
 
     // ======================================================
     // 2) DETECTAR INTENÇÃO
