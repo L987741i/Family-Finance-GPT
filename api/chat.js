@@ -172,17 +172,6 @@ export default async function handler(req, res) {
         }
       }
 
-      // Se bater com uma carteira existente pelo nome
-      if (globalContext.wallets && Array.isArray(globalContext.wallets)) {
-        const wallet = globalContext.wallets.find(w =>
-          text.includes(String(w.name).toLowerCase())
-        );
-        if (wallet) {
-          updated.account_name = wallet.name;
-          return sendConfirmation(res, updated);
-        }
-      }
-
       // ---------------------------------------------------------------
       // (D) MUDAR DESCRIÇÃO
       // ---------------------------------------------------------------
