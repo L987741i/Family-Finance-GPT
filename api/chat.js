@@ -1,6 +1,5 @@
 // /api/chat.js — IA Financeira + Lovable
-// Versão 2025 com inteligência aprimorada e correção de frequência
-// Compatível com Vercel Serverless (ESM)
+// Versão inteligente 2025 — interpretação contextual e semântica
 
 let globalContext = {};
 
@@ -51,93 +50,166 @@ export default async function handler(req, res) {
         updated.category_name = msgLower;
       }
 
-      const confirmation = formatConfirmation(updated);
-
-      return res.status(200).json({
-        reply: confirmation,
-        action: "awaiting_confirmation",
-        data: updated
-      });
+      return sendConfirmation(res, updated);
     }
 
     // ================================================================
-    // 1.5) EDIÇÃO INTELIGENTE DURANTE A CONFIRMAÇÃO (VERSÃO DEFINITIVA)
+    // 1.5) EDIÇÃO INTELIGENTE DURANTE A CONFIRMAÇÃO (SEMÂNTICA REAL)
     // ================================================================
     if (pending && !missing) {
       const updated = { ...pending };
+      const text = msgLower;
 
-      // ============================================================
-      // (1) ALTERAR FREQUÊNCIA — sempre analisado primeiro
-      // ============================================================
-      const isFreq = (
-        msgLower === "fixa" ||
-        msgLower === "fixo" ||
-        msgLower === "variável" ||
-        msgLower === "variavel" ||
-        msgLower.includes("frequencia") ||
-        msgLower.includes("frequência") ||
-        msgLower.includes("é fixa") ||
-        msgLower.includes("é variavel") ||
-        msgLower.includes("e fixa") ||
-        msgLower.includes("e variavel")
-      );
+      // ------------------------------------------------------------
+      // (A) FREQUÊNCIA — qualquer jeito de dizer que é fixa/variável
+      // ------------------------------------------------------------
+      const isFreqFixa =
+        text === "fixa" ||
+        text === "fixo" ||
+        text.includes("é fixa") ||
+        text.includes("frequencia fixa") ||
+        text.includes("frequência fixa") ||
+        text.includes("freq fixa");
 
-      if (isFreq) {
-        if (msgLower.includes("fix")) {
-          updated.frequency = "fixed";
-        } else {
-          updated.frequency = "variable";
+      const isFreqVariavel =
+        text === "variável" ||
+        text === "variavel" ||
+        text.includes("é variável") ||
+        text.includes("é variavel") ||
+        text.includes("frequencia variavel") ||
+        text.includes("frequência variável") ||
+        text.includes("freq variavel");
+
+      if (isFreqFixa) {
+        updated.frequency = "fixed";
+        return sendConfirmation(res, updated);
+      }
+
+      if (isFreqVariavel) {
+        updated.frequency = "variable";
+        return sendConfirmation(res, updated);
+      }
+
+      // ------------------------------------------------------------
+      // (B) MUDAR CATEGORIA — entende várias formas de pedir
+      // ------------------------------------------------------------
+      if (
+        text.startsWith("categoria") ||
+        text.includes("categoria é") ||
+        text.includes("muda categoria") ||
+        text.includes("troca categoria") ||
+        text.includes("coloca categoria") ||
+        text.includes("pra categoria")
+      ) {
+        const newCategory = text
+          .replace("categoria é", "")
+          .replace("categoria", "")
+          .replace("muda", "")
+          .replace("troca", "")
+          .replace("coloca", "")
+          .replace("pra", "")
+          .replace("para", "")
+          .trim();
+
+        if (newCategory) {
+          updated.category_name = newCategory;
+          return sendConfirmation(res, updated);
         }
-
-        return sendConfirmation(res, updated); 
       }
 
-      // ============================================================
-      // (2) ALTERAR CATEGORIA
-      // ============================================================
-      if (msgLower.startsWith("categoria")) {
-        const newCat = cleanEditWord(msgLower, "categoria");
-        updated.category_name = newCat;
+      // Se o usuário mandar só uma palavra curta (ex: "lar", "salário") e a categoria ainda não foi mexida
+      if (
+        text.split(" ").length === 1 &&
+        text.length <= 20 &&
+        !["sim", "não", "nao", "ok"].includes(text)
+      ) {
+        // aqui interpretamos como categoria provável
+        updated.category_name = text;
         return sendConfirmation(res, updated);
       }
 
-      // ============================================================
-      // (3) ALTERAR CONTA — SOMENTE SE COMEÇAR COM "conta"
-      // ============================================================
-      if (msgLower.startsWith("conta")) {
-        const newAcc = cleanEditWord(msgLower, "conta");
-        updated.account_name = newAcc;
-        return sendConfirmation(res, updated);
+      // ------------------------------------------------------------
+      // (C) MUDAR CONTA — frases que indicam conta/carteira/banco
+      // ------------------------------------------------------------
+      if (
+        text.startsWith("conta") ||
+        text.includes("usa conta") ||
+        text.includes("troca conta") ||
+        text.includes("coloca na conta") ||
+        text.includes("é na conta") ||
+        text.includes("banco") ||
+        text.includes("carteira")
+      ) {
+        const newAcc = text
+          .replace("conta", "")
+          .replace("usa", "")
+          .replace("troca", "")
+          .replace("coloca", "")
+          .replace("na conta", "")
+          .replace("é", "")
+          .trim();
+
+        if (newAcc) {
+          updated.account_name = newAcc;
+          return sendConfirmation(res, updated);
+        }
       }
 
-      // ============================================================
-      // (4) ALTERAR DESCRIÇÃO
-      // ============================================================
-      if (msgLower.startsWith("descrição") || msgLower.startsWith("descricao")) {
-        const newDesc = cleanEditWord(msgLower, "descrição");
-        updated.description = newDesc;
-        return sendConfirmation(res, updated);
-      }
-
-      // ============================================================
-      // (5) ALTERAR VALOR
-      // ============================================================
-      if (msgLower.startsWith("valor")) {
-        const num = Number(
-          msgLower.replace("valor", "").replace("é", "").replace(",", ".").trim()
+      // Se mandar algo que bate com uma carteira (Nubank, carteira lucas, etc)
+      if (globalContext.wallets && globalContext.wallets.length > 0) {
+        const maybeWallet = globalContext.wallets.find(w =>
+          text.includes(w.name.toLowerCase())
         );
+        if (maybeWallet) {
+          updated.account_name = maybeWallet.name;
+          return sendConfirmation(res, updated);
+        }
+      }
 
-        if (!num || isNaN(num)) {
-          return res.status(200).json({
-            reply: "Informe um valor válido 💰",
-            action: "need_more_info",
-            data: { missing_field: "amount", partial_data: updated }
-          });
+      // ------------------------------------------------------------
+      // (D) MUDAR DESCRIÇÃO
+      // ------------------------------------------------------------
+      if (
+        text.startsWith("descrição") ||
+        text.startsWith("descricao") ||
+        text.includes("muda descrição") ||
+        text.includes("muda descricao") ||
+        text.includes("troca descrição") ||
+        text.includes("troca descricao")
+      ) {
+        const newDesc = text
+          .replace("descrição", "")
+          .replace("descricao", "")
+          .replace("muda", "")
+          .replace("troca", "")
+          .replace("é", "")
+          .trim();
+
+        if (newDesc) {
+          updated.description = newDesc;
+          return sendConfirmation(res, updated);
+        }
+      }
+
+      // ------------------------------------------------------------
+      // (E) MUDAR VALOR
+      // ------------------------------------------------------------
+      const onlyNumberRegex = /^[0-9]+([.,][0-9]+)?$/;
+      if (text.includes("valor") || onlyNumberRegex.test(text)) {
+        const raw = text.replace("valor", "").replace("é", "").trim();
+        const n = Number(raw.replace(",", "."));
+        if (!isNaN(n) && n > 0) {
+          updated.amount = n;
+          return sendConfirmation(res, updated);
         }
 
-        updated.amount = num;
-        return sendConfirmation(res, updated);
+        return res.status(200).json({
+          reply: "Informe um valor válido 💰",
+          action: "need_more_info",
+          data: { missing_field: "amount", partial_data: updated }
+        });
       }
+      // Se não bateu nenhuma regra acima, segue fluxo normal (intents etc.)
     }
 
     // ================================================================
@@ -209,24 +281,14 @@ export default async function handler(req, res) {
 
 //
 // ================================================================
-// FUNÇÕES AUXILIARES
+// FUNÇÕES AUXILIARES GERAIS
 // ================================================================
-//
-
 function sendConfirmation(res, data) {
   return res.status(200).json({
     reply: formatConfirmation(data),
     action: "awaiting_confirmation",
     data
   });
-}
-
-function cleanEditWord(msg, word) {
-  return msg
-    .replace(`${word} é`, "")
-    .replace(word, "")
-    .replace("é", "")
-    .trim();
 }
 
 function detectIntent(msg) {
@@ -279,7 +341,7 @@ function extractTransaction(msg) {
   const description = inferDescription(msg);
 
   const account = inferWallet(description, wallets);
-  let category = inferCategory(description, categories);
+  const { category, suggestions } = guessCategory(description, categories);
 
   const partial = {
     type,
@@ -319,6 +381,16 @@ function extractTransaction(msg) {
   }
 
   if (!category) {
+    // Se tiver sugestões (ambíguo), pergunta entre elas
+    if (suggestions && suggestions.length >= 2) {
+      return {
+        needsMoreInfo: true,
+        missingField: "category_name",
+        reply: `A categoria desse lançamento é: *${suggestions[0]}* ou *${suggestions[1]}*?`,
+        partial
+      };
+    }
+
     const list = categories.map(c => `• ${c.name}`).join("\n");
     return {
       needsMoreInfo: true,
@@ -341,65 +413,89 @@ function extractTransaction(msg) {
 // ================================================================
 // INTELIGÊNCIA DE CATEGORIAS
 // ================================================================
-function inferCategory(desc, categories) {
-  if (!categories || categories.length === 0) return null;
+function guessCategory(desc, categories) {
+  if (!categories || categories.length === 0) return { category: null, suggestions: [] };
 
   const text = desc.toLowerCase();
 
+  // 1) Match direto pelo nome da categoria
   const direct = categories.find(c => text.includes(c.name.toLowerCase()));
-  if (direct) return direct.name;
+  if (direct) return { category: direct.name, suggestions: [] };
 
-  const categoryMap = [
-    { words: ["aluguel", "renda", "moradia"], cat: "Aluguel" },
-    { words: ["condomínio", "condominio"], cat: "Condomínio" },
-    { words: ["iptu"], cat: "IPTU" },
-    { words: ["supermercado", "mercado"], cat: "Supermercado" },
-    { words: ["padaria", "pão"], cat: "Padaria" },
-    { words: ["delivery", "ifood", "lanche"], cat: "Delivery" },
-    { words: ["gasolina", "combustível"], cat: "Combustível" },
-    { words: ["uber", "99"], cat: "Uber / 99" },
-    { words: ["energia", "luz"], cat: "Energia" },
-    { words: ["internet", "wifi"], cat: "Internet" },
-    { words: ["psicólogo", "terapia"], cat: "Psicólogo / Terapia" },
-    { words: ["farmácia", "remédio"], cat: "Farmácia" },
-    { words: ["dentista"], cat: "Dentista" },
-    { words: ["curso", "escola", "mensalidade"], cat: "Educação" },
-    { words: ["roupa", "camisa", "vestido"], cat: "Roupas" },
-    { words: ["calçado", "tênis"], cat: "Calçados" },
-    { words: ["petshop", "ração"], cat: "Ração / Petshop" },
-    { words: ["dízimo"], cat: "Dízimo" },
-    { words: ["salário"], cat: "Salário" },
-    { words: ["freela", "extra"], cat: "Extra" }
+  // 2) Mapa de palavras-chave → categorias (baseado na sua lista)
+  const map = [
+    { cat: "Moradia", words: ["aluguel", "condomínio", "condominio", "iptu", "prestação", "financiamento"] },
+    { cat: "Aluguel", words: ["aluguel", "aluguer"] },
+    { cat: "Condomínio", words: ["condomínio", "condominio"] },
+    { cat: "IPTU", words: ["iptu"] },
+
+    { cat: "Supermercado", words: ["mercado", "supermercado", "compra do mês", "compras do mes"] },
+    { cat: "Padaria", words: ["padaria", "pão", "pao"] },
+    { cat: "Delivery", words: ["ifood", "delivery", "lanchinho", "lanche", "restaurante"] },
+
+    { cat: "Combustível", words: ["gasolina", "combustível", "combustivel", "etanol"] },
+    { cat: "Ônibus / Trem / Metrô", words: ["ônibus", "onibus", "trem", "metrô", "metro", "passagem"] },
+    { cat: "Uber / 99", words: ["uber", "99", "corrida"] },
+
+    { cat: "Energia", words: ["energia", "luz", "eletricidade"] },
+    { cat: "Água", words: ["água", "agua", "conta de agua"] },
+    { cat: "Gás", words: ["gás", "gas", "botijão"] },
+    { cat: "Internet", words: ["internet", "wifi"] },
+    { cat: "Plano de celular", words: ["celular", "plano de celular", "telefone"] },
+    { cat: "Streaming (Netflix, Prime, etc.)", words: ["netflix", "prime video", "disney", "spotify"] },
+
+    { cat: "Plano de saúde", words: ["plano de saúde", "plano de saude"] },
+    { cat: "Farmácia", words: ["remédio", "remedio", "farmácia", "farmacia"] },
+    { cat: "Psicólogo / Terapia", words: ["psicólogo", "psicologo", "terapia", "terapeuta"] },
+    { cat: "Dentista", words: ["dentista"] },
+
+    { cat: "Educação", words: ["escola", "mensalidade escolar", "faculdade", "curso", "material escolar"] },
+    { cat: "Academia / Esportes", words: ["academia", "musculação", "treino", "esporte"] },
+
+    { cat: "Roupas", words: ["roupa", "camisa", "calça", "vestido", "blusa"] },
+    { cat: "Calçados", words: ["tênis", "tenis", "sapato", "sandália", "sandalia"] },
+    { cat: "Acessórios", words: ["relógio", "relogio", "corrente", "pulseira", "brinco"] },
+
+    { cat: "Dízimo", words: ["dízimo", "dizimo"] },
+    { cat: "Oferta", words: ["oferta", "ofertinha"] },
+    { cat: "Missões", words: ["missões", "missoes"] },
+    { cat: "Ajudas sociais", words: ["ajuda", "cesta básica", "cesta basica", "doação", "doacao"] },
+
+    { cat: "Ração", words: ["ração", "racao"] },
+    { cat: "Petshop", words: ["petshop", "banho e tosa"] },
+
+    // ENTRADAS
+    { cat: "Salário", words: ["salário", "salario", "meu salário", "meu salario"] },
+    { cat: "Extra", words: ["extra", "bico", "freelancer", "freela"] },
+    { cat: "Venda", words: ["venda", "vendi"] },
+    { cat: "Empréstimo", words: ["empréstimo", "emprestimo"] }
   ];
 
-  for (const g of categoryMap) {
-    if (g.words.some(w => text.includes(w))) {
-      const found = categories.find(c =>
-        c.name.toLowerCase() === g.cat.toLowerCase()
+  let candidates = [];
+
+  for (const item of map) {
+    if (item.words.some(w => text.includes(w))) {
+      const found = categories.find(
+        c => c.name.toLowerCase() === item.cat.toLowerCase()
       );
-      if (found) return found.name;
+      if (found) {
+        candidates.push(found.name);
+      }
     }
   }
 
-  const ambiguous = [
-    {
-      options: ["Descartáveis", "Produtos de Limpeza"],
-      trigger: ["sacola", "copos", "panos", "esponja"]
-    }
-  ];
-
-  for (const a of ambiguous) {
-    if (a.trigger.some(w => text.includes(w))) {
-      return {
-        needsMoreInfo: true,
-        missingField: "category_name",
-        reply: `A categoria desse lançamento é: *${a.options[0]}* ou *${a.options[1]}*?`,
-        partial
-      };
-    }
+  // Nenhum match no mapa
+  if (candidates.length === 0) {
+    return { category: null, suggestions: [] };
   }
 
-  return categories.find(c => c.type === "expense")?.name || null;
+  // Um match claro
+  if (candidates.length === 1) {
+    return { category: candidates[0], suggestions: [] };
+  }
+
+  // Mais de um match → considerado ambíguo, devolve sugestões
+  return { category: null, suggestions: [...new Set(candidates)] };
 }
 
 //
