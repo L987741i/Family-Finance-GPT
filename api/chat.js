@@ -1,5 +1,5 @@
-// /api/chat.js — versão aprimorada, humanizada e com personalidade ✨
-// Totalmente compatível com Vercel Serverless (ESM)
+// /api/chat.js — versão com conta, data e personalidade ✨
+// 100% compatível com Vercel (ESM)
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -8,14 +8,12 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { message, history, context } = req.body || {};
+    const { message, context } = req.body || {};
 
-    // ============================
-    //   VALIDAÇÃO INICIAL
-    // ============================
     if (!message || typeof message !== "string") {
       res.status(200).json({
-        reply: "Hmm… não consegui entender direitinho 🤔\nPode tentar dizer de outro jeito?",
+        reply:
+          "Hmm… não entendi muito bem 🤔\nPode explicar de outra forma pra eu te ajudar melhor?",
         action: "message"
       });
       return;
@@ -24,18 +22,18 @@ export default async function handler(req, res) {
     const intent = detectIntent(message);
 
     // ============================
-    //      CANCELAR OPERAÇÃO
+    // CANCELAR
     // ============================
     if (intent.type === "cancel") {
       res.status(200).json({
-        reply: "Tudo certo 👍\nO que você quiser cancelar, está cancelado!",
+        reply: "Tudo bem! Cancelado com sucesso 👍",
         action: "cancelled"
       });
       return;
     }
 
     // ============================
-    //   CONSULTAS / RELATÓRIOS
+    // CONSULTAS (Lovable processa)
     // ============================
     if (intent.type === "query") {
       res.status(200).json({
@@ -47,7 +45,7 @@ export default async function handler(req, res) {
     }
 
     // ============================
-    // CONFIRMAR TRANSAÇÃO PENDENTE
+    // CONFIRMAR TRANSAÇÃO
     // ============================
     if (intent.type === "confirm") {
       const pending = context?.pending_transaction;
@@ -55,14 +53,14 @@ export default async function handler(req, res) {
       if (!pending) {
         res.status(200).json({
           reply:
-            "Hmm... não encontrei nada aqui pra confirmar 🤔\nMe lembra rapidinho o que você quer registrar?",
+            "Poxa... não encontrei nada para confirmar 🤔\nPode me dizer de novo o que deseja registrar?",
           action: "message"
         });
         return;
       }
 
       res.status(200).json({
-        reply: "Perfeito! Já vou lançar isso pra você agora mesmo 🚀",
+        reply: "Perfeito! Já vou registrar isso pra você agora mesmo 🚀",
         action: "success",
         data: pending
       });
@@ -70,7 +68,7 @@ export default async function handler(req, res) {
     }
 
     // ============================
-    //  NOVA TRANSAÇÃO
+    // NOVA TRANSAÇÃO
     // ============================
     if (intent.type === "transaction") {
       const parsed = extractTransaction(message);
@@ -79,10 +77,7 @@ export default async function handler(req, res) {
         res.status(200).json({
           reply: parsed.reply,
           action: "need_more_info",
-          data: {
-            missing_field: parsed.missingField,
-            partial_data: parsed.partial
-          }
+          data: parsed.data
         });
         return;
       }
@@ -96,26 +91,25 @@ export default async function handler(req, res) {
     }
 
     // ============================
-    // MENSAGEM GENÉRICA / AJUDA
+    // GENÉRICO
     // ============================
     res.status(200).json({
       reply:
-        "Oi! Eu sou a sua IA financeira 🌟\n" +
-        "Posso te ajudar com lançamentos e consultas rapidinho.\n\n" +
-        "Experimente me dizer:\n" +
-        "• “paguei 50 no mercado 🛒”\n" +
+        "Oi! ✨ Eu sou sua assistente financeira.\n\n" +
+        "Pode me dizer coisas como:\n" +
+        "• “paguei 50 no mercado” 🛒\n" +
+        "• “recebi 200 de salário” 💼\n" +
         "• “quanto gastei hoje?” 📅\n" +
-        "• “recebi 200 de salário 💼”\n" +
-        "• “qual meu saldo?” 📊",
+        "• “qual meu saldo?” 📊\n",
       action: "message"
     });
 
   } catch (err) {
-    console.error("Erro na IA externa:", err);
+    console.error("Erro IA externa:", err);
 
     res.status(500).json({
       reply:
-        "Ops! Tive um probleminha técnico agora 😕\nPode tentar novamente pra mim?",
+        "Ops! Tive um probleminha aqui 😕\nPode tentar novamente, por favor?",
       action: "error",
       details: String(err)
     });
@@ -123,81 +117,74 @@ export default async function handler(req, res) {
 }
 
 // =============================================================
-//                 DETECÇÃO DE INTENÇÃO 🧠
+// CONFIGURAÇÕES PRINCIPAIS
 // =============================================================
 
+// Contas da família (editável)
+const FAMILY_ACCOUNTS = ["carteira", "nubank", "bb", "itau", "caixa"];
+
+// Detectar intenção
 function detectIntent(message) {
   const msg = message.toLowerCase().trim();
 
-  if (/(cancelar|cancela|esquece|deixa pra lá|deixa pra la)/.test(msg)) {
+  if (/(cancelar|cancela|esquece|deixa pra lá|deixa pra la)/.test(msg))
     return { type: "cancel" };
-  }
 
-  if (/^(sim|pode|ok|confirmo|pode registrar)$/.test(msg)) {
+  if (/^(sim|pode|confirmo|ok|pode registrar)$/.test(msg))
     return { type: "confirm" };
-  }
 
-  // CONSULTAS
-  if (/quanto gastei hoje|gastei hoje/.test(msg)) {
+  if (/quanto gastei hoje/.test(msg))
     return {
       type: "query",
       action: "query_spent_today",
-      reply: "Beleza! Vou conferir seus gastos de hoje 💰✨"
+      reply: "Claro! Vou ver quanto você gastou hoje 💸"
     };
-  }
 
-  if (/gastei na semana|gastos da semana/.test(msg)) {
+  if (/gastos da semana|gastei na semana/.test(msg))
     return {
       type: "query",
       action: "query_spent_week",
-      reply: "Um segundo! Vou puxar seus gastos desta semana 🗓️📊"
+      reply: "Beleza! Vou puxar seus gastos da semana 🗓️✨"
     };
-  }
 
-  if (/gastei no mês|gastos do mês|este mês/.test(msg)) {
+  if (/gastei no mês|este mês/.test(msg)) {
     const now = new Date();
     return {
       type: "query",
       action: "query_spent_month",
-      reply: "Deixa comigo! Vou verificar como está seu mês financeiro 🔎📆",
-      data: {
-        month: now.getMonth() + 1,
-        year: now.getFullYear()
-      }
+      reply: "Um instante! Vou analisar seu mês financeiro 📊",
+      data: { month: now.getMonth() + 1, year: now.getFullYear() }
     };
   }
 
-  if (/recebi hoje|entrada hoje/.test(msg)) {
+  if (/recebi hoje/.test(msg))
     return {
       type: "query",
       action: "query_received_today",
-      reply: "Certo! Vou ver quanto entrou hoje 👀💵"
+      reply: "Wow! Vamos ver quanto entrou hoje 💵"
     };
-  }
 
-  if (/saldo|como estou financeiramente|minhas finanças/.test(msg)) {
+  if (/saldo|minhas finanças/.test(msg))
     return {
       type: "query",
       action: "query_balance",
-      reply: "Já vou calcular seu saldo total 📊🔥"
+      reply: "Certo! Vou calcular seu saldo geral 💼✨"
     };
-  }
 
-  // TRANSAÇÕES
-  if (/(paguei|gastei|comprei|usei|recebi|ganhei|entrou)/.test(msg)) {
+  if (/(paguei|gastei|comprei|usei|dei|recebi|ganhei|entrou)/.test(msg))
     return { type: "transaction" };
-  }
 
   return { type: "general" };
 }
 
 // =============================================================
-//                EXTRAÇÃO DE TRANSAÇÃO 📝
+// EXTRAÇÃO DA TRANSAÇÃO
 // =============================================================
 
 function extractTransaction(message) {
   const msg = message.toLowerCase();
 
+  // tipo
   const type =
     /(recebi|entrou|ganhei)/.test(msg)
       ? "income"
@@ -205,78 +192,99 @@ function extractTransaction(message) {
       ? "expense"
       : null;
 
+  // valor
   const amountMatch = msg.match(/(\d+[.,]?\d*)/);
-  const amount = amountMatch ? parseFloat(amountMatch[1].replace(",", ".")) : null;
+  const amount = amountMatch
+    ? parseFloat(amountMatch[1].replace(",", "."))
+    : null;
 
+  // descrição
   const description = inferDescription(msg);
-  const payment_method = inferPaymentMethod(msg);
-  const installments = inferInstallments(msg);
-  const suggested_category_name = inferCategory(description);
 
-  const partial = {
+  // forma de pagamento
+  const payment_method = inferPaymentMethod(msg);
+
+  // parcelas
+  const installments = inferInstallments(msg);
+
+  // conta
+  const account_name = inferAccount(msg);
+
+  // data
+  const date = inferDate(msg);
+
+  // se faltar valor
+  if (!amount) {
+    return {
+      needsMoreInfo: true,
+      reply: `Perfeito! Só me diz o valor de *${description}* 💵`,
+      data: {
+        missing_field: "amount",
+        partial_data: { type, description }
+      }
+    };
+  }
+
+  // falta conta
+  if (!account_name) {
+    return {
+      needsMoreInfo: true,
+      reply:
+        "Só pra finalizar… qual conta você usou? 💳\n\n" +
+        `Opções: ${FAMILY_ACCOUNTS.join(", ")}`,
+      data: {
+        missing_field: "account_name",
+        partial_data: { type, amount, description }
+      }
+    };
+  }
+
+  const fullData = {
     type,
     amount,
     description,
     payment_method,
     installments,
-    suggested_category_name,
+    account_name,
+    date,
     frequency: "variable"
   };
 
-  // FALTA O VALOR
-  if (!amount) {
-    return {
-      needsMoreInfo: true,
-      missingField: "amount",
-      reply: `Perfeito! Quanto foi *${description}*? 💵`,
-      partial
-    };
-  }
-
-  // FALTA O TIPO
-  if (!type) {
-    return {
-      needsMoreInfo: true,
-      missingField: "type",
-      reply: "Isso foi entrada ou saída? 🤔",
-      partial
-    };
-  }
-
-  // CONFIRMAÇÃO FINAL
   const confirmation =
-    `Ótimo! Vamos confirmar tudo certinho 👇\n\n` +
-    `• Tipo: ${type === "expense" ? "Despesa 💸" : "Receita 💰"}\n` +
+    `Vamos conferir tudo certinho 👇\n\n` +
+    `• Tipo: ${type === "expense" ? "Despesa 💸" : "Entrada 💰"}\n` +
     `• Valor: R$ ${amount.toFixed(2)}\n` +
     `• Descrição: ${description}\n` +
-    `• Categoria sugerida: ${suggested_category_name}\n` +
-    (installments ? `• Parcelado: ${installments}x\n` : "") +
-    `\nPosso registrar pra você? 😊`;
+    `• Conta: ${account_name}\n` +
+    `• Data: ${date}\n` +
+    (installments ? `• Parcelas: ${installments}x\n` : "") +
+    `\nPosso registrar? 😊`;
 
   return {
     needsMoreInfo: false,
-    fullData: partial,
+    fullData,
     confirmation
   };
 }
 
 // =============================================================
-//                HELPERS INTELIGENTES ⚙️
+// HELPERS
 // =============================================================
 
 function inferDescription(msg) {
   const clean = msg
     .replace(/(paguei|gastei|comprei|usei|dei|recebi|ganhei|entrou)/g, "")
     .replace(/(\d+[.,]?\d*)/g, "")
-    .replace(/(pix|debito|débito|crédito|credito|vezes|parcel|cartão)/g, "")
+    .replace(/(pix|debito|débito|credito|crédito|cartão)/g, "")
     .trim();
 
   return clean || "Lançamento";
 }
 
 function inferPaymentMethod(msg) {
-  if (/pix|debito|débito|dinheiro/.test(msg)) return "account";
-  if (/cart[aã]o/.test(msg) && /x/.test(msg)) return "credit_card_installments";
+  if (/pix|dinheiro|débito|debito/.test(msg)) return "account";
+  if (/cart[aã]o/.test(msg) && /\d+x/.test(msg))
+    return "credit_card_installments";
   if (/cart[aã]o|cr[eé]dito/.test(msg)) return "credit_card_cash";
   return "account";
 }
@@ -286,10 +294,23 @@ function inferInstallments(msg) {
   return match ? parseInt(match[1]) : null;
 }
 
-function inferCategory(desc) {
-  if (/mercado|supermercado|ifood|almoço|restaurante/.test(desc)) return "Alimentação 🍽️";
-  if (/uber|gasolina|combustivel|estacionamento/.test(desc)) return "Transporte 🚗";
-  if (/luz|agua|internet|celular|telefone/.test(desc)) return "Contas Mensais 📡";
-  if (/farmacia|remedio|hospital|dentista/.test(desc)) return "Saúde 🏥";
-  return "Outros 🗂️";
+function inferAccount(msg) {
+  for (const acc of FAMILY_ACCOUNTS) {
+    if (msg.includes(acc)) return acc;
+  }
+  return null;
+}
+
+function inferDate(msg) {
+  const now = new Date();
+
+  if (msg.includes("hoje")) return now.toISOString().slice(0, 10);
+  if (msg.includes("agora")) return now.toISOString().slice(0, 10);
+  if (msg.includes("ontem")) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  return now.toISOString().slice(0, 10);
 }
