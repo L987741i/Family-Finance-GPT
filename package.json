@@ -1,7 +1,7 @@
 {
   "name": "family-finance-gpt",
   "version": "1.0.0",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "openai": "4.53.0"
   }
