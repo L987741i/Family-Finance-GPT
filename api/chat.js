@@ -1,6 +1,5 @@
 // /api/chat.js — IA Financeira + Lovable
-// Versão evoluída 2025 — Inteligência aprimorada
-// Melhor interpretação de alterações + categoria inteligente
+// Versão 2025 com inteligência aprimorada e correção de frequência
 // Compatível com Vercel Serverless (ESM)
 
 let globalContext = {};
@@ -62,46 +61,72 @@ export default async function handler(req, res) {
     }
 
     // ================================================================
-    // 1.5) EDIÇÃO INTELIGENTE DURANTE A CONFIRMAÇÃO
+    // 1.5) EDIÇÃO INTELIGENTE DURANTE A CONFIRMAÇÃO (VERSÃO DEFINITIVA)
     // ================================================================
     if (pending && !missing) {
       const updated = { ...pending };
 
-      // --- ALTERAR FREQUÊNCIA ---
-      if (["fixa", "fixo"].includes(msgLower)) {
-        updated.frequency = "fixed";
-        return sendConfirmation(res, updated);
+      // ============================================================
+      // (1) ALTERAR FREQUÊNCIA — sempre analisado primeiro
+      // ============================================================
+      const isFreq = (
+        msgLower === "fixa" ||
+        msgLower === "fixo" ||
+        msgLower === "variável" ||
+        msgLower === "variavel" ||
+        msgLower.includes("frequencia") ||
+        msgLower.includes("frequência") ||
+        msgLower.includes("é fixa") ||
+        msgLower.includes("é variavel") ||
+        msgLower.includes("e fixa") ||
+        msgLower.includes("e variavel")
+      );
+
+      if (isFreq) {
+        if (msgLower.includes("fix")) {
+          updated.frequency = "fixed";
+        } else {
+          updated.frequency = "variable";
+        }
+
+        return sendConfirmation(res, updated); 
       }
 
-      if (["variável", "variavel"].includes(msgLower)) {
-        updated.frequency = "variable";
-        return sendConfirmation(res, updated);
-      }
-
-      // --- ALTERAR CATEGORIA ---
+      // ============================================================
+      // (2) ALTERAR CATEGORIA
+      // ============================================================
       if (msgLower.startsWith("categoria")) {
         const newCat = cleanEditWord(msgLower, "categoria");
         updated.category_name = newCat;
         return sendConfirmation(res, updated);
       }
 
-      // --- ALTERAR CONTA ---
+      // ============================================================
+      // (3) ALTERAR CONTA — SOMENTE SE COMEÇAR COM "conta"
+      // ============================================================
       if (msgLower.startsWith("conta")) {
         const newAcc = cleanEditWord(msgLower, "conta");
         updated.account_name = newAcc;
         return sendConfirmation(res, updated);
       }
 
-      // --- ALTERAR DESCRIÇÃO ---
+      // ============================================================
+      // (4) ALTERAR DESCRIÇÃO
+      // ============================================================
       if (msgLower.startsWith("descrição") || msgLower.startsWith("descricao")) {
         const newDesc = cleanEditWord(msgLower, "descrição");
         updated.description = newDesc;
         return sendConfirmation(res, updated);
       }
 
-      // --- ALTERAR VALOR ---
+      // ============================================================
+      // (5) ALTERAR VALOR
+      // ============================================================
       if (msgLower.startsWith("valor")) {
-        const num = Number(msgLower.replace("valor", "").replace("é", "").replace(",", ".").trim());
+        const num = Number(
+          msgLower.replace("valor", "").replace("é", "").replace(",", ".").trim()
+        );
+
         if (!num || isNaN(num)) {
           return res.status(200).json({
             reply: "Informe um valor válido 💰",
@@ -109,6 +134,7 @@ export default async function handler(req, res) {
             data: { missing_field: "amount", partial_data: updated }
           });
         }
+
         updated.amount = num;
         return sendConfirmation(res, updated);
       }
@@ -236,8 +262,6 @@ function detectIntent(msg) {
 // ================================================================
 // PROCESSAMENTO DA TRANSAÇÃO
 // ================================================================
-//
-
 function extractTransaction(msg) {
   const wallets = globalContext.wallets || [];
   const categories = globalContext.categories || [];
@@ -317,18 +341,14 @@ function extractTransaction(msg) {
 // ================================================================
 // INTELIGÊNCIA DE CATEGORIAS
 // ================================================================
-//
-
 function inferCategory(desc, categories) {
   if (!categories || categories.length === 0) return null;
 
   const text = desc.toLowerCase();
 
-  // --- 1) MATCH DIRETO ---
   const direct = categories.find(c => text.includes(c.name.toLowerCase()));
   if (direct) return direct.name;
 
-  // --- 2) MAPA DE PALAVRAS ROBUSTO ---
   const categoryMap = [
     { words: ["aluguel", "renda", "moradia"], cat: "Aluguel" },
     { words: ["condomínio", "condominio"], cat: "Condomínio" },
@@ -347,7 +367,7 @@ function inferCategory(desc, categories) {
     { words: ["roupa", "camisa", "vestido"], cat: "Roupas" },
     { words: ["calçado", "tênis"], cat: "Calçados" },
     { words: ["petshop", "ração"], cat: "Ração / Petshop" },
-    { words: ["dízimo", "oferta"], cat: "Dízimo" },
+    { words: ["dízimo"], cat: "Dízimo" },
     { words: ["salário"], cat: "Salário" },
     { words: ["freela", "extra"], cat: "Extra" }
   ];
@@ -361,7 +381,6 @@ function inferCategory(desc, categories) {
     }
   }
 
-  // --- 3) CASOS AMBÍGUOS ---
   const ambiguous = [
     {
       options: ["Descartáveis", "Produtos de Limpeza"],
@@ -380,7 +399,6 @@ function inferCategory(desc, categories) {
     }
   }
 
-  // fallback
   return categories.find(c => c.type === "expense")?.name || null;
 }
 
@@ -388,8 +406,6 @@ function inferCategory(desc, categories) {
 // ================================================================
 // CONFIRMAÇÃO FORMATADA
 // ================================================================
-//
-
 function formatConfirmation(data) {
   if (!data.amount || isNaN(Number(data.amount))) {
     return `Me diga o valor desse lançamento 💰\nExemplo: 20, 35.90, 120`;
@@ -414,8 +430,6 @@ Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
 // ================================================================
 // AJUDANTES
 // ================================================================
-//
-
 function inferDescription(msg) {
   return msg
     .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou)/g, "")
