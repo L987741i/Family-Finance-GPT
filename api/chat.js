@@ -184,7 +184,6 @@ function detectIntent(message) {
 function extractTransaction(message) {
   const msg = message.toLowerCase();
 
-  // tipo
   const type =
     /(recebi|entrou|ganhei)/.test(msg)
       ? "income"
@@ -192,38 +191,74 @@ function extractTransaction(message) {
       ? "expense"
       : null;
 
-  // valor
   const amountMatch = msg.match(/(\d+[.,]?\d*)/);
-  const amount = amountMatch
-    ? parseFloat(amountMatch[1].replace(",", "."))
-    : null;
+  const amount = amountMatch ? parseFloat(amountMatch[1].replace(",", ".")) : null;
 
-  // descrição
   const description = inferDescription(msg);
-
-  // forma de pagamento
   const payment_method = inferPaymentMethod(msg);
-
-  // parcelas
   const installments = inferInstallments(msg);
 
-  // conta
-  const account_name = inferAccount(msg);
+  // 🔥 PEGANDO CARTEIRAS E CATEGORIAS DO CONTEXTO (enviadas pelo Lovable)
+  const categories = globalContext?.categories || [];
+  const wallets = globalContext?.wallets || [];
 
-  // data
-  const date = inferDate(msg);
+  const suggested_category_name = inferCategory(description, categories);
+  const suggested_wallet_name = inferWallet(description, wallets);
 
-  // se faltar valor
+  const partial = {
+    type,
+    amount,
+    description,
+    payment_method,
+    installments,
+    category_name: suggested_category_name,
+    account_name: suggested_wallet_name,
+    frequency: "variable"
+  };
+
+  // Falta valor
   if (!amount) {
     return {
       needsMoreInfo: true,
-      reply: `Perfeito! Só me diz o valor de *${description}* 💵`,
-      data: {
-        missing_field: "amount",
-        partial_data: { type, description }
-      }
+      missingField: "amount",
+      reply: `Perfeito! Quanto foi *${description}*? 💵`,
+      partial
     };
   }
+
+  // Falta tipo
+  if (!type) {
+    return {
+      needsMoreInfo: true,
+      missingField: "type",
+      reply: "Isso foi entrada ou saída? 🤔",
+      partial
+    };
+  }
+
+  // 📌 FORMATO DE CONFIRMAÇÃO PERSONALIZADO
+  const isExpense = type === "expense";
+  const emojiType = isExpense ? "🔴 *Despesa*" : "🟢 *Receita*";
+
+  const today = new Date()
+    .toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+
+  const confirmation =
+`${emojiType} | 📅 Variável
+💰 *Valor*: R$ ${amount.toFixed(2)}
+📝 *Descrição*: ${description}
+💳 *Conta*: ${suggested_wallet_name || "Selecionar"}
+📁 *Categoria*: ${suggested_category_name || "Selecionar"}
+_${today}_
+
+Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
+
+  return {
+    needsMoreInfo: false,
+    fullData: partial,
+    confirmation
+  };
+}
 
   // falta conta
   if (!account_name) {
