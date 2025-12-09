@@ -27,190 +27,122 @@ export default async function handler(req, res) {
     // ================================================================
     // 1) CONTINUAÇÃO DE CAMPO FALTANTE
     // ================================================================
-    if (pending && missing) {
-      const updated = { ...pending };
+   
+// ================================================================
+// EDIÇÃO INTELIGENTE DURANTE A CONFIRMAÇÃO (ÚNICO BLOCO)
+// ================================================================
+if (pending && !missing) {
+  const updated = { ...pending };
+  const text = msgLower;
 
-      if (missing === "amount") {
-        const parsed = Number(message.replace(",", "."));
-        if (!parsed || isNaN(parsed)) {
-          return res.status(200).json({
-            reply: "Me diga um valor válido 💰",
-            action: "need_more_info",
-            data: { missing_field: "amount", partial_data: updated }
-          });
-        }
-        updated.amount = parsed;
-      }
+  // FREQUÊNCIA — frases longas ou curtas
+  if (
+    text === "fixa" ||
+    text === "fixo" ||
+    text.includes("é fixa") ||
+    text.includes("frequência fixa") ||
+    text.includes("frequencia fixa")
+  ) {
+    updated.frequency = "fixed";
+    return sendConfirmation(res, updated);
+  }
 
-      if (missing === "account_name") {
-        updated.account_name = msgLower;
-      }
+  if (
+    text === "variável" ||
+    text === "variavel" ||
+    text.includes("é variável") ||
+    text.includes("é variavel") ||
+    text.includes("frequencia variavel")
+  ) {
+    updated.frequency = "variable";
+    return sendConfirmation(res, updated);
+  }
 
-      if (missing === "category_name") {
-        updated.category_name = msgLower;
-      }
+  // ALTERAR CATEGORIA
+  if (
+    text.startsWith("categoria") ||
+    text.includes("categoria é") ||
+    text.includes("muda categoria") ||
+    text.includes("troca categoria") ||
+    text.includes("coloca categoria") ||
+    text.includes("pra categoria")
+  ) {
+    const newCategory = text
+      .replace("categoria", "")
+      .replace("é", "")
+      .replace("muda", "")
+      .replace("troca", "")
+      .replace("coloca", "")
+      .replace("pra", "")
+      .trim();
 
+    updated.category_name = newCategory;
+    return sendConfirmation(res, updated);
+  }
+
+  // Categoria enviada sozinha ("lar", "alimentação", etc.)
+  if (
+    text.split(" ").length === 1 &&
+    text.length <= 20 &&
+    !["sim", "não", "nao", "ok"].includes(text)
+  ) {
+    updated.category_name = text;
+    return sendConfirmation(res, updated);
+  }
+
+  // ALTERAR CONTA — somente se começar com "conta"
+  if (text.startsWith("conta")) {
+    const newAcc = text
+      .replace("conta", "")
+      .replace("é", "")
+      .replace("na", "")
+      .trim();
+
+    updated.account_name = newAcc;
+    return sendConfirmation(res, updated);
+  }
+
+  // Reconhecer carteira pelo nome
+  if (globalContext.wallets?.some(w => text.includes(w.name.toLowerCase()))) {
+    const wallet = globalContext.wallets.find(w =>
+      text.includes(w.name.toLowerCase())
+    );
+    updated.account_name = wallet.name;
+    return sendConfirmation(res, updated);
+  }
+
+  // ALTERAR DESCRIÇÃO
+  if (
+    text.startsWith("descrição") ||
+    text.startsWith("descricao") ||
+    text.includes("muda descrição") ||
+    text.includes("troca descrição")
+  ) {
+    const newDesc = text
+      .replace("descrição", "")
+      .replace("descricao", "")
+      .replace("muda", "")
+      .replace("troca", "")
+      .replace("é", "")
+      .trim();
+
+    updated.description = newDesc;
+    return sendConfirmation(res, updated);
+  }
+
+  // ALTERAR VALOR
+  const numRegex = /^[0-9]+([.,][0-9]+)?$/;
+  if (numRegex.test(text) || text.includes("valor")) {
+    const raw = text.replace("valor", "").replace("é", "").trim();
+    const n = Number(raw.replace(",", "."));
+
+    if (!isNaN(n) && n > 0) {
+      updated.amount = n;
       return sendConfirmation(res, updated);
     }
+  }
+}
 
-    // ================================================================
-    // 1.5) EDIÇÃO INTELIGENTE DURANTE A CONFIRMAÇÃO (SEMÂNTICA REAL)
-    // ================================================================
-    if (pending && !missing) {
-      const updated = { ...pending };
-      const text = msgLower;
-
-      // ------------------------------------------------------------
-      // (A) FREQUÊNCIA — qualquer jeito de dizer que é fixa/variável
-      // ------------------------------------------------------------
-      const isFreqFixa =
-        text === "fixa" ||
-        text === "fixo" ||
-        text.includes("é fixa") ||
-        text.includes("frequencia fixa") ||
-        text.includes("frequência fixa") ||
-        text.includes("freq fixa");
-
-      const isFreqVariavel =
-        text === "variável" ||
-        text === "variavel" ||
-        text.includes("é variável") ||
-        text.includes("é variavel") ||
-        text.includes("frequencia variavel") ||
-        text.includes("frequência variável") ||
-        text.includes("freq variavel");
-
-      if (isFreqFixa) {
-        updated.frequency = "fixed";
-        return sendConfirmation(res, updated);
-      }
-
-      if (isFreqVariavel) {
-        updated.frequency = "variable";
-        return sendConfirmation(res, updated);
-      }
-
-      // ------------------------------------------------------------
-      // (B) MUDAR CATEGORIA — entende várias formas de pedir
-      // ------------------------------------------------------------
-      if (
-        text.startsWith("categoria") ||
-        text.includes("categoria é") ||
-        text.includes("muda categoria") ||
-        text.includes("troca categoria") ||
-        text.includes("coloca categoria") ||
-        text.includes("pra categoria")
-      ) {
-        const newCategory = text
-          .replace("categoria é", "")
-          .replace("categoria", "")
-          .replace("muda", "")
-          .replace("troca", "")
-          .replace("coloca", "")
-          .replace("pra", "")
-          .replace("para", "")
-          .trim();
-
-        if (newCategory) {
-          updated.category_name = newCategory;
-          return sendConfirmation(res, updated);
-        }
-      }
-
-      // Se o usuário mandar só uma palavra curta (ex: "lar", "salário") e a categoria ainda não foi mexida
-      if (
-        text.split(" ").length === 1 &&
-        text.length <= 20 &&
-        !["sim", "não", "nao", "ok"].includes(text)
-      ) {
-        // aqui interpretamos como categoria provável
-        updated.category_name = text;
-        return sendConfirmation(res, updated);
-      }
-
-      // ------------------------------------------------------------
-      // (C) MUDAR CONTA — frases que indicam conta/carteira/banco
-      // ------------------------------------------------------------
-      if (
-        text.startsWith("conta") ||
-        text.includes("usa conta") ||
-        text.includes("troca conta") ||
-        text.includes("coloca na conta") ||
-        text.includes("é na conta") ||
-        text.includes("banco") ||
-        text.includes("carteira")
-      ) {
-        const newAcc = text
-          .replace("conta", "")
-          .replace("usa", "")
-          .replace("troca", "")
-          .replace("coloca", "")
-          .replace("na conta", "")
-          .replace("é", "")
-          .trim();
-
-        if (newAcc) {
-          updated.account_name = newAcc;
-          return sendConfirmation(res, updated);
-        }
-      }
-
-      // Se mandar algo que bate com uma carteira (Nubank, carteira lucas, etc)
-      if (globalContext.wallets && globalContext.wallets.length > 0) {
-        const maybeWallet = globalContext.wallets.find(w =>
-          text.includes(w.name.toLowerCase())
-        );
-        if (maybeWallet) {
-          updated.account_name = maybeWallet.name;
-          return sendConfirmation(res, updated);
-        }
-      }
-
-      // ------------------------------------------------------------
-      // (D) MUDAR DESCRIÇÃO
-      // ------------------------------------------------------------
-      if (
-        text.startsWith("descrição") ||
-        text.startsWith("descricao") ||
-        text.includes("muda descrição") ||
-        text.includes("muda descricao") ||
-        text.includes("troca descrição") ||
-        text.includes("troca descricao")
-      ) {
-        const newDesc = text
-          .replace("descrição", "")
-          .replace("descricao", "")
-          .replace("muda", "")
-          .replace("troca", "")
-          .replace("é", "")
-          .trim();
-
-        if (newDesc) {
-          updated.description = newDesc;
-          return sendConfirmation(res, updated);
-        }
-      }
-
-      // ------------------------------------------------------------
-      // (E) MUDAR VALOR
-      // ------------------------------------------------------------
-      const onlyNumberRegex = /^[0-9]+([.,][0-9]+)?$/;
-      if (text.includes("valor") || onlyNumberRegex.test(text)) {
-        const raw = text.replace("valor", "").replace("é", "").trim();
-        const n = Number(raw.replace(",", "."));
-        if (!isNaN(n) && n > 0) {
-          updated.amount = n;
-          return sendConfirmation(res, updated);
-        }
-
-        return res.status(200).json({
-          reply: "Informe um valor válido 💰",
-          action: "need_more_info",
-          data: { missing_field: "amount", partial_data: updated }
-        });
-      }
-      // Se não bateu nenhuma regra acima, segue fluxo normal (intents etc.)
-    }
 
     // ================================================================
     // 2) INTENÇÃO DO USUÁRIO
