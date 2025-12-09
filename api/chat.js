@@ -284,8 +284,37 @@ function inferWallet(desc, wallets) {
 }
 
 function inferCategory(desc, categories) {
-  desc = desc.toLowerCase();
-  return categories.find(c => desc.includes(c.name.toLowerCase()))?.name || null;
+  if (!categories || categories.length === 0) return null;
+
+  const text = desc.toLowerCase();
+
+  // 1) TENTAR ENCONTRAR A CATEGORIA PELO NOME EXATO
+  for (const cat of categories) {
+    if (text.includes(cat.name.toLowerCase())) {
+      return cat.name;
+    }
+  }
+
+  // 2) PALAVRAS-CHAVE PADRÃO PARA TIPOS DE CATEGORIA
+  const keywords = [
+    { words: ["pão", "padaria", "comida", "almoço", "jantar", "lanche", "mercado", "supermercado"], cat: "alimentação" },
+    { words: ["uber", "gasolina", "ônibus", "carro"], cat: "transporte" },
+    { words: ["luz", "água", "conta", "internet", "telefone"], cat: "contas mensais" },
+    { words: ["farmácia", "remédio", "cura", "dor"], cat: "saúde" },
+    { words: ["roupa", "sapato", "loja"], cat: "vestuário" }
+  ];
+
+  // 3) VERIFICAR PALAVRAS-CHAVE
+  for (const group of keywords) {
+    if (group.words.some(w => text.includes(w))) {
+      const found = categories.find(c => c.name.toLowerCase() === group.cat);
+      if (found) return found.name;
+    }
+  }
+
+  // 4) NENHUMA ENCONTRADA → null
+  return null;
 }
+
 
 let globalContext = {};
