@@ -1,5 +1,3 @@
-// /api/chat.js
-
 // ===================== INTENT DETECTION =====================
 
 function detectIntent(message) {
@@ -17,7 +15,7 @@ function detectIntent(message) {
     return { type: "confirm" };
   }
 
-  // Consultas – gastos
+  // Consultas
   if (/quanto gastei hoje|gastei hoje|meus gastos hoje/.test(msg)) {
     return {
       type: "query",
@@ -49,7 +47,6 @@ function detectIntent(message) {
     };
   }
 
-  // Consultas – receitas
   if (/quanto recebi hoje|entrou hoje|receitas de hoje/.test(msg)) {
     return {
       type: "query",
@@ -59,7 +56,6 @@ function detectIntent(message) {
     };
   }
 
-  // Consulta – saldo
   if (/saldo|como estou financeiramente|minhas finanças/.test(msg)) {
     return {
       type: "query",
@@ -69,7 +65,6 @@ function detectIntent(message) {
     };
   }
 
-  // Frases típicas de lançamento
   if (/(paguei|gastei|comprei|usei|dei|recebi|entrou|ganhei)/.test(msg)) {
     return { type: "transaction" };
   }
@@ -77,7 +72,7 @@ function detectIntent(message) {
   return { type: "general" };
 }
 
-// ===================== TRANSACTION PARSING =====================
+// ===================== TRANSACTION EXTRACTION =====================
 
 function detectAmount(text) {
   if (!text) return null;
@@ -93,69 +88,63 @@ function detectType(text) {
 }
 
 function detectInstallments(text) {
-  if (!text) return null;
   const match = text.match(/(\d+)\s*x/);
   return match ? parseInt(match[1], 10) : null;
 }
 
 function detectPaymentMethod(text) {
   const msg = text.toLowerCase();
-  if (/pix|d[eé]bito|debito|dinheiro|esp[eé]cie|transfer/.test(msg)) return "account";
+  if (/pix|d[eé]bito|debito|dinheiro|transfer/.test(msg)) return "account";
   if (/cart[aã]o/.test(msg) && detectInstallments(msg)) return "credit_card_installments";
   if (/cart[aã]o|cr[eé]dito/.test(msg)) return "credit_card_cash";
   return "account";
 }
 
 function detectCategory(description) {
-  if (!description) return null;
   const desc = description.toLowerCase();
 
-  if (/mercado|supermercado|ifood|almo[cç]o|restaurante|pizza|lanche|comida/.test(desc))
+  if (/mercado|supermercado|ifood|almo[cç]o|restaurante|pizza|lanche/.test(desc))
     return "Alimentação";
 
-  if (/uber|99|gasolina|combust[ií]vel|estacionamento|ped[aá]gio|transporte/.test(desc))
+  if (/uber|gasolina|combust[ií]vel|estacionamento|ped[aá]gio/.test(desc))
     return "Transporte";
 
-  if (/luz|energia|[aá]gua|telefone|celular|internet|netflix|spotify|disney|assinatura/.test(desc))
+  if (/luz|energia|[aá]gua|telefone|internet|netflix|spotify/.test(desc))
     return "Contas Mensais";
 
-  if (/farm[aá]cia|rem[eé]dio|m[eé]dico|dentista|exame|hospital/.test(desc))
+  if (/farm[aá]cia|rem[eé]dio|m[eé]dico|dentista/.test(desc))
     return "Saúde";
 
-  if (/ração|racao|pet|veterin[aá]rio/.test(desc))
+  if (/ração|pet|veterin[aá]rio/.test(desc))
     return "Pets";
 
   return "Outros";
 }
 
-function extractDescription(message) {
-  if (!message) return "Lançamento";
-  const msg = message.toLowerCase();
-
-  let desc = msg
+function extractDescription(msg) {
+  let text = msg
     .replace(/(paguei|gastei|comprei|usei|dei|recebi|entrou|ganhei)/g, "")
-    .replace(/(no |na |em )/g, "")
     .replace(/(\d+(\,\d+)?|\d+(\.\d+)?)/g, "")
-    .replace(/(pix|d[eé]bito|debito|cr[eé]dito|dinheiro|cart[aã]o|vezes|x)/g, "")
+    .replace(/(pix|debito|débito|crédito|credito|dinheiro|cartão|vezes|x)/g, "")
     .trim();
 
-  if (!desc) return "Lançamento";
-  return desc;
+  if (!text) return "Lançamento";
+  return text;
 }
 
 function naturalMissingMessage(field, partial) {
-  switch (field) {
-    case "amount":
-      return partial.description
-        ? `Perfeito! Quanto foi *${partial.description}*?`
-        : "Perfeito! Qual foi o valor?";
-    case "type":
-      return "Isso foi uma entrada (receita) ou uma saída (despesa)?";
-    case "description":
-      return "Legal! Me diz agora o que foi essa transação (ex: mercado, uber, aluguel...).";
-    default:
-      return "Pode me informar o que falta?";
+  if (field === "amount") {
+    return partial.description
+      ? `Perfeito! Quanto foi *${partial.description}*?`
+      : "Perfeito! Qual foi o valor?";
   }
+  if (field === "type") {
+    return "Isso foi uma entrada (receita) ou uma saída (despesa)?";
+  }
+  if (field === "description") {
+    return "Legal! Me diz agora o que foi essa transação (ex: mercado, uber, aluguel...).";
+  }
+  return "Pode me informar o que falta?";
 }
 
 function extractTransaction(message) {
@@ -165,30 +154,32 @@ function extractTransaction(message) {
   const payment_method = detectPaymentMethod(message);
   const installments = detectInstallments(message);
   const suggested_category_name = detectCategory(description);
-  const frequency = "variable";
 
   const partial = {
     type,
     amount,
     description,
-    frequency,
+    frequency: "variable",
     payment_method,
     installments,
     suggested_category_name
   };
 
-  const missing = [];
-  if (!amount) missing.push("amount");
-  if (!type) missing.push("type");
-  if (!description || description.length < 2) missing.push("description");
-
-  if (missing.length > 0) {
-    const first = missing[0];
+  if (!amount) {
     return {
       needsMoreInfo: true,
-      missingField: first,
+      missingField: "amount",
       partial,
-      reply: naturalMissingMessage(first, partial)
+      reply: naturalMissingMessage("amount", partial)
+    };
+  }
+
+  if (!type) {
+    return {
+      needsMoreInfo: true,
+      missingField: "type",
+      partial,
+      reply: naturalMissingMessage("type", partial)
     };
   }
 
@@ -210,9 +201,9 @@ function extractTransaction(message) {
   };
 }
 
-// ===================== HANDLER PRINCIPAL =====================
+// ===================== MAIN HANDLER =====================
 
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
     return;
@@ -220,30 +211,21 @@ export default async function handler(req, res) {
 
   try {
     const body = req.body || {};
-    const { message, history, context } = body;
-
-    if (!message || typeof message !== "string" || !message.trim()) {
-      res.status(200).json({
-        reply: "Não entendi muito bem. Pode me explicar com mais detalhes? 😊",
-        action: "error"
-      });
-      return;
-    }
+    const message = body.message || "";
+    const context = body.context || null;
 
     const intent = detectIntent(message);
 
-    // 1) CANCELAR
     if (intent.type === "cancel") {
-      res.status(200).json({
+      res.json({
         reply: "Sem problema, cancelei essa operação 👍",
         action: "cancelled"
       });
       return;
     }
 
-    // 2) CONSULTAS (RELATÓRIO / SALDO)
     if (intent.type === "query") {
-      res.status(200).json({
+      res.json({
         reply: intent.reply,
         action: intent.action,
         data: intent.data || {}
@@ -251,65 +233,61 @@ export default async function handler(req, res) {
       return;
     }
 
-    // 3) CONFIRMAÇÃO – depende do contexto enviado pelo Lovable
     if (intent.type === "confirm") {
-      const pending = context && context.pending_transaction;
-
-      if (!pending) {
-        res.status(200).json({
-          reply: "Não encontrei nenhum lançamento pendente para confirmar 🤔. Me conta de novo o que você quer registrar?",
+      if (!context || !context.pending_transaction) {
+        res.json({
+          reply: "Não encontrei nada pendente para confirmar 🤔",
           action: "error"
         });
         return;
       }
 
-      res.status(200).json({
-        reply: "Perfeito! Vou registrar esse lançamento pra você 🎯",
+      res.json({
+        reply: "Perfeito! Vou registrar isso pra você 🎯",
         action: "success",
-        data: pending
+        data: context.pending_transaction
       });
       return;
     }
 
-    // 4) TRANSAÇÃO – registrar entrada/saída
     if (intent.type === "transaction") {
-      const parsed = extractTransaction(message);
+      const result = extractTransaction(message);
 
-      if (parsed.needsMoreInfo) {
-        res.status(200).json({
-          reply: parsed.reply,
+      if (result.needsMoreInfo) {
+        res.json({
+          reply: result.reply,
           action: "need_more_info",
           data: {
-            missing_field: parsed.missingField,
-            partial_data: parsed.partial
+            missing_field: result.missingField,
+            partial_data: result.partial
           }
         });
         return;
       }
 
-      res.status(200).json({
-        reply: parsed.confirmation,
+      res.json({
+        reply: result.confirmation,
         action: "awaiting_confirmation",
-        data: parsed.fullData
+        data: result.fullData
       });
       return;
     }
 
-    // 5) PERGUNTA GERAL – resposta simples, sem ação especial
-    res.status(200).json({
-      reply: "Sou seu assistente financeiro. Você pode me perguntar coisas como:\n\n" +
-             "• \"paguei 50 no mercado\"\n" +
-             "• \"quanto gastei hoje?\"\n" +
-             "• \"recebi 200 de salário\"\n" +
-             "• \"qual o meu saldo?\"",
+    res.json({
+      reply:
+        "Sou seu assistente financeiro! Você pode me dizer coisas como:\n\n" +
+        "• \"paguei 50 no mercado\"\n" +
+        "• \"quanto gastei hoje?\"\n" +
+        "• \"recebi 200 de salário\"\n" +
+        "• \"qual o meu saldo?\"",
       action: "message"
     });
   } catch (error) {
-    console.error("Erro na IA externa:", error);
+    console.error("IA Error:", error);
     res.status(500).json({
-      reply: "Tive um problema para processar sua solicitação agora 😕. Tente reformular sua frase.",
+      reply: "Houve um problema ao processar sua solicitação 😕",
       action: "error",
       details: String(error)
     });
   }
-}
+};
