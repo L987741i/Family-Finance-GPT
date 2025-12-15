@@ -1,7 +1,329 @@
 // /api/chat.js — IA Financeira + Lovable
-// Versão 2025 — Estável, com transcrição inteligente de edição
+// Versão 2025 — Categorias Fixas + Hierarquia + Estabilidade Total
 
 let globalContext = {};
+
+//
+// ======================================================================
+// 🧠 1) DEFINIÇÃO OFICIAL DE CATEGORIAS (agrupamento + filhos + keywords)
+// ======================================================================
+//
+
+const CATEGORY_TREE = {
+  expense: [
+    {
+      group: "Moradia",
+      items: [
+        { name: "Aluguel", keywords: ["aluguel", "alugue"] },
+        { name: "Financiamento / Prestação", keywords: ["financiamento", "prestação", "prestacao"] },
+        { name: "Condomínio", keywords: ["condomínio", "condominio"] },
+        { name: "IPTU", keywords: ["iptu"] }
+      ]
+    },
+
+    {
+      group: "Contas Essenciais",
+      items: [
+        { name: "Energia", keywords: ["energia", "luz", "eletricidade"] },
+        { name: "Água", keywords: ["água", "agua", "cedae"] },
+        { name: "Gás", keywords: ["gás", "gas", "botijão"] },
+        { name: "Internet", keywords: ["internet", "wifi"] },
+        { name: "Telefonia", keywords: ["telefone", "celular", "recarga", "plano"] }
+      ]
+    },
+
+    {
+      group: "Alimentação",
+      items: [
+        { name: "Supermercado", keywords: ["mercado", "supermercado", "compra do mês"] },
+        { name: "Padaria", keywords: ["padaria", "pão", "pao"] },
+        { name: "Açougue", keywords: ["açougue", "acougue"] },
+        { name: "Feira", keywords: ["feira", "hortifruti"] },
+        { name: "Restaurante", keywords: ["almoço", "jantar", "restaurante"] },
+        { name: "Lanche", keywords: ["lanche", "ifood", "delivery", "burger", "pizza"] }
+      ]
+    },
+
+    {
+      group: "Transporte",
+      items: [
+        { name: "Combustível", keywords: ["gasolina", "etanol", "combustível"] },
+        { name: "Estacionamento", keywords: ["estacionamento", "zona azul"] },
+        { name: "Pedágio", keywords: ["pedágio", "pedagio"] },
+        { name: "Manutenção Veicular", keywords: ["oficina", "mecânico", "manutenção"] },
+        { name: "Seguro Auto", keywords: ["seguro auto"] },
+        { name: "Transporte App / Público", keywords: ["uber", "99", "ônibus", "trem", "metrô"] }
+      ]
+    },
+
+    {
+      group: "Saúde",
+      items: [
+        { name: "Farmácia", keywords: ["farmácia", "farmacia", "remédio"] },
+        { name: "Consultas", keywords: ["consulta", "dentista", "psicólogo"] },
+        { name: "Exames", keywords: ["exame", "laboratório"] },
+        { name: "Hospital", keywords: ["hospital"] },
+        { name: "Plano de Saúde", keywords: ["plano de saúde", "unimed"] }
+      ]
+    },
+
+    {
+      group: "Educação",
+      items: [
+        { name: "Escola", keywords: ["escola", "colégio"] },
+        { name: "Cursos", keywords: ["curso", "faculdade", "ingles"] },
+        { name: "Material Escolar", keywords: ["material escolar", "caderno"] }
+      ]
+    },
+
+    {
+      group: "Lazer",
+      items: [
+        { name: "Cinema", keywords: ["cinema", "filme"] },
+        { name: "Viagem", keywords: ["viagem", "hotel"] },
+        { name: "Passeios", keywords: ["passeio", "parque", "ingresso"] },
+        { name: "Streaming", keywords: ["netflix", "spotify", "prime", "disney"] }
+      ]
+    },
+
+    {
+      group: "Vestuário",
+      items: [
+        { name: "Roupas", keywords: ["roupa", "blusa", "camisa", "calça"] },
+        { name: "Calçados", keywords: ["tênis", "sapato"] },
+        { name: "Acessórios", keywords: ["relógio", "bolsa"] }
+      ]
+    },
+
+    {
+      group: "Financeiro",
+      items: [
+        { name: "Tarifa Bancária", keywords: ["tarifa", "taxa bancária"] },
+        { name: "Anuidade Cartão", keywords: ["anuidade", "cartão de crédito"] },
+        { name: "Juros", keywords: ["juros", "atraso"] },
+        { name: "Multas", keywords: ["multa"] }
+      ]
+    },
+
+    {
+      group: "Casa & Manutenção",
+      items: [
+        { name: "Reforma", keywords: ["reforma", "obra", "pedreiro"] },
+        { name: "Móveis", keywords: ["sofá", "cama", "mesa", "cadeira"] },
+        { name: "Ferramentas", keywords: ["furadeira", "martelo"] }
+      ]
+    },
+
+    {
+      group: "Pets",
+      items: [
+        { name: "Ração", keywords: ["ração", "racao"] },
+        { name: "Veterinário", keywords: ["veterinário"] },
+        { name: "Higiene", keywords: ["banho e tosa", "petshop"] }
+      ]
+    },
+
+    {
+      group: "Outros / Diversos",
+      items: [
+        { name: "Presentes", keywords: ["presente"] },
+        { name: "Doações", keywords: ["doação", "dizimo"] },
+        { name: "Emergências", keywords: ["emergência", "imprevisto"] }
+      ]
+    }
+  ],
+
+  income: [
+    { group: "Receita", items: [
+        { name: "Salário", keywords: ["salário", "salario", "pagamento"] },
+        { name: "Investimentos", keywords: ["investimento", "dividendos"] },
+        { name: "Extras", keywords: ["freela", "bico", "extra"] },
+        { name: "Presentes", keywords: ["presente", "ganhei"] },
+        { name: "Venda", keywords: ["venda", "vendi"] },
+        { name: "Empréstimo (entrada)", keywords: ["emprestimo", "entrada"] },
+        { name: "Juros", keywords: ["juros"] },
+        { name: "Benefícios", keywords: ["vr", "va", "benefício"] }
+    ]}
+  ]
+};
+
+
+//
+// ======================================================================
+// 🧪 2) FUNÇÃO DE CATEGORIZAÇÃO OFICIAL
+// ======================================================================
+//
+
+function findBestCategory(text, type = "expense") {
+  const list = CATEGORY_TREE[type] || [];
+
+  let best = null;
+  let bestScore = 0;
+
+  const clean = text.toLowerCase();
+
+  for (const group of list) {
+    for (const item of group.items) {
+      let score = 0;
+
+      const itemName = item.name.toLowerCase();
+
+      if (clean === itemName) score += 100;
+      else if (clean.includes(itemName)) score += 60;
+
+      for (const kw of item.keywords) {
+        if (clean.includes(kw.toLowerCase())) {
+          score += 40 + kw.length;
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = `${group.group} / ${item.name}`;
+      }
+    }
+  }
+
+  return { best, score: bestScore };
+}
+
+
+//
+// ======================================================================
+// 🔍 3) DESCRIÇÃO E CARTEIRA
+// ======================================================================
+//
+
+function inferDescription(msg) {
+  return msg
+    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/gi, "")
+    .replace(/(\d+[.,]?\d*)/g, "")
+    .trim() || "Lançamento";
+}
+
+function inferWallet(desc, wallets) {
+  if (!wallets || wallets.length === 0) return null;
+
+  const d = desc.toLowerCase();
+
+  const w = wallets.find(w => d.includes(w.name.toLowerCase()));
+  return w ? w.name : null;
+}
+
+
+//
+// ======================================================================
+// 📦 4) FORMATAÇÃO DA CONFIRMAÇÃO
+// ======================================================================
+//
+
+function formatConfirmation(data) {
+  const amount = Number(data.amount || 0);
+  const emoji = data.type === "expense" ? "🔴 Despesa" : "🟢 Receita";
+  const freq = data.frequency === "fixed" ? "Fixa" : "Variável";
+  const today = new Date().toLocaleDateString("pt-BR");
+
+  return `${emoji} | 📅 ${freq}
+💰 Valor: R$ ${amount.toFixed(2)}
+📝 Descrição: ${data.description}
+💳 Conta: ${data.account_name}
+📁 Categoria: ${data.category_name}
+_${today}_
+
+Confirma o lançamento? (Sim/Não)`;
+}
+
+
+//
+// ======================================================================
+// 🧠 5) EXTRAÇÃO DE NOVA TRANSAÇÃO
+// ======================================================================
+//
+
+function extractTransaction(msg) {
+  const wallets = globalContext.wallets || [];
+
+  const type = /(recebi|ganhei|salario|entrada)/.test(msg) ? "income" : "expense";
+
+  const amountMatch = msg.match(/(\d+[.,]?\d*)/);
+  const amount = amountMatch ? Number(amountMatch[1].replace(",", ".")) : null;
+
+  const description = inferDescription(msg);
+
+  const account = inferWallet(description, wallets);
+
+  const { best: category } = findBestCategory(description, type);
+
+  const partial = {
+    type,
+    amount,
+    description,
+    account_name: account,
+    category_name: category,
+    frequency: /(fixo|fixa|mensal)/.test(msg) ? "fixed" : "variable"
+  };
+
+  if (!amount) {
+    return {
+      needsMoreInfo: true,
+      missingField: "amount",
+      reply: `Qual o valor de *${description}*? 💰`,
+      partial
+    };
+  }
+
+  if (!account) {
+    const list = wallets.map(w => `• ${w.name}`).join("\n");
+
+    return {
+      needsMoreInfo: true,
+      missingField: "account_name",
+      reply: `De qual conta saiu ou entrou? 💳\n\n${list}`,
+      partial
+    };
+  }
+
+  if (!category) {
+    return {
+      needsMoreInfo: true,
+      missingField: "category_name",
+      reply: `Qual categoria melhor representa esse lançamento?`,
+      partial
+    };
+  }
+
+  return {
+    needsMoreInfo: false,
+    fullData: partial,
+    confirmation: formatConfirmation(partial)
+  };
+}
+
+
+//
+// ======================================================================
+// 🧠 6) INTENÇÃO DO USUÁRIO
+// ======================================================================
+//
+
+function detectIntent(msg) {
+  if (/^(cancelar|cancela|esquece)$/.test(msg)) return { type: "cancel" };
+  if (/^(sim|ok|confirmo)$/.test(msg)) return { type: "confirm" };
+  if (/saldo/.test(msg)) return { type: "query", action: "query_balance", reply: "Calculando saldo..." };
+
+  if (/(paguei|gastei|comprei|recebi|ganhei|entrou)/.test(msg)) {
+    return { type: "transaction" };
+  }
+
+  return { type: "general" };
+}
+
+
+//
+// ======================================================================
+// 🧠 7) HANDLER PRINCIPAL
+// ======================================================================
+//
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -12,105 +334,109 @@ export default async function handler(req, res) {
     const { message, context } = req.body || {};
 
     globalContext = context || {};
+
     const pending = context?.pending_transaction || null;
     const missing = context?.missing_field || null;
 
-    if (!message || typeof message !== "string") {
+    if (!message) {
       return res.status(200).json({
         reply: "Não entendi 🤔 pode repetir?",
         action: "message"
       });
     }
 
-    const msgLower = message.toLowerCase().trim();
+    const msg = message.toLowerCase().trim();
 
-    // ======================================================================
-    // 1) CONTINUAÇÃO DE CAMPO FALTANTE
-    // ======================================================================
+    // ⚠ Se está esperando campo faltante, tratar primeiro
     if (pending && missing) {
       const updated = { ...pending };
 
       if (missing === "amount") {
-        const parsed = Number(message.replace(",", "."));
-        if (!parsed || isNaN(parsed)) {
+        const n = Number(msg.replace(",", "."));
+        if (!n) {
           return res.status(200).json({
-            reply: "Me diga um valor válido 💰",
+            reply: "Valor inválido. Me diga um valor real 💰",
             action: "need_more_info",
             data: { missing_field: "amount", partial_data: updated }
           });
         }
-        updated.amount = parsed;
+        updated.amount = n;
       }
 
       if (missing === "account_name") {
-        updated.account_name = msgLower;
+        updated.account_name = msg;
       }
 
       if (missing === "category_name") {
-        updated.category_name = msgLower;
+        const { best } = findBestCategory(msg, updated.type);
+        updated.category_name = best || "Outros / Diversos";
       }
 
-      if (missing === "type") {
-        const norm = normalize(msgLower);
-        if (norm.includes("entrada") || norm.includes("receita")) {
-          updated.type = "income";
-        } else if (
-          norm.includes("saida") ||
-          norm.includes("saída") ||
-          norm.includes("despesa")
-        ) {
-          updated.type = "expense";
-        } else {
-          return res.status(200).json({
-            reply: "Isso foi *entrada* ou *saída*? 🤔",
-            action: "need_more_info",
-            data: { missing_field: "type", partial_data: updated }
-          });
-        }
-      }
-
-      return sendConfirmation(res, updated);
-    }
-
-    // ======================================================================
-    // 2) EDIÇÃO INTELIGENTE DURANTE A CONFIRMAÇÃO (TRANSCRIÇÃO)
-    // ======================================================================
-    if (pending && !missing) {
-      const updated = { ...pending };
-      const edit = transcribeEdit(msgLower, pending, globalContext);
-
-      if (edit) {
-        updated[edit.field] = edit.value;
-        return sendConfirmation(res, updated);
-      }
-      // se não for edição, segue pro fluxo de intenção (sim, cancelar, etc.)
-    }
-
-    // ======================================================================
-    // 3) INTENÇÃO DO USUÁRIO
-    // ======================================================================
-    const intent = detectIntent(msgLower);
-
-    if (intent.type === "cancel") {
       return res.status(200).json({
-        reply: "Tudo certo 👍 operação cancelada!",
-        action: "cancelled"
+        reply: formatConfirmation(updated),
+        action: "awaiting_confirmation",
+        data: updated
       });
     }
 
-    if (intent.type === "confirm") {
-      if (!pending) {
+    // 🔍 EDIÇÃO DURANTE CONFIRMAÇÃO
+    if (pending) {
+      const updated = { ...pending };
+
+      // mudar categoria
+      if (msg.startsWith("categoria") || msg.includes("categoria é")) {
+        const raw = msg.replace("categoria", "").replace("é", "").trim();
+        const { best } = findBestCategory(raw, updated.type);
+        updated.category_name = best || "Outros / Diversos";
         return res.status(200).json({
-          reply: "Não encontrei nada para confirmar 🤔",
-          action: "message"
+          reply: formatConfirmation(updated),
+          action: "awaiting_confirmation",
+          data: updated
         });
       }
 
-      return res.status(200).json({
-        reply: "Perfeito! Registrando agora 🚀",
-        action: "success",
-        data: pending
-      });
+      // mudar conta
+      if (msg.includes("conta")) {
+        updated.account_name = msg.replace("conta", "").trim();
+        return res.status(200).json({
+          reply: formatConfirmation(updated),
+          action: "awaiting_confirmation",
+          data: updated
+        });
+      }
+
+      // mudar valor
+      const n = Number(msg.replace(",", "."));
+      if (!isNaN(n) && n > 0) {
+        updated.amount = n;
+        return res.status(200).json({
+          reply: formatConfirmation(updated),
+          action: "awaiting_confirmation",
+          data: updated
+        });
+      }
+
+      // mudar descrição
+      if (msg.includes("descrição") || msg.includes("descricao")) {
+        updated.description = msg.replace("descrição", "").replace("descricao", "").trim();
+        return res.status(200).json({
+          reply: formatConfirmation(updated),
+          action: "awaiting_confirmation",
+          data: updated
+        });
+      }
+    }
+
+    // 📌 Intenção
+    const intent = detectIntent(msg);
+
+    if (intent.type === "cancel") {
+      return res.status(200).json({ reply: "Cancelado 👍", action: "cancelled" });
+    }
+
+    if (intent.type === "confirm") {
+      if (!pending) return res.status(200).json({ reply: "Nada para confirmar.", action: "message" });
+      return res.status(200).json({ reply: "Registrado! 🚀", action: "success", data: pending });
     }
 
     if (intent.type === "query") {
@@ -121,10 +447,8 @@ export default async function handler(req, res) {
       });
     }
 
-    // ======================================================================
-    // 4) NOVA TRANSAÇÃO
-    // ======================================================================
-    const parsed = extractTransaction(msgLower);
+    // 🆕 Nova transação
+    const parsed = extractTransaction(msg);
 
     if (parsed.needsMoreInfo) {
       return res.status(200).json({
@@ -144,411 +468,10 @@ export default async function handler(req, res) {
     });
 
   } catch (err) {
-    console.error("Erro na IA Financeira:", err);
+    console.error("ERRO:", err);
     return res.status(500).json({
-      reply: "Ops! Tive um problema técnico 😕 Tenta de novo em instantes.",
+      reply: "Erro técnico 😕",
       action: "error"
     });
   }
-}
-
-//
-// ======================================================================
-// FUNÇÕES AUXILIARES PRINCIPAIS
-// ======================================================================
-
-function sendConfirmation(res, data) {
-  return res.status(200).json({
-    reply: formatConfirmation(data),
-    action: "awaiting_confirmation",
-    data
-  });
-}
-
-function detectIntent(msg) {
-  const norm = normalize(msg);
-
-  // tratar SIM / NÃO como confirmação/cancelamento
-  if (/^(sim|pode|ok|confirmo)$/.test(norm)) return { type: "confirm" };
-  if (/^(nao|não|n)$/.test(norm) || /^(cancelar|cancela|esquece)$/.test(norm)) {
-    return { type: "cancel" };
-  }
-
-  if (norm.includes("quanto gastei hoje"))
-    return { type: "query", action: "query_spent_today", reply: "Verificando seus gastos de hoje 💸" };
-
-  if (norm.includes("gastei na semana"))
-    return { type: "query", action: "query_spent_week", reply: "Analisando seus gastos da semana 📅" };
-
-  if (norm.includes("gastei no mes") || norm.includes("gastei no mês")) {
-    const now = new Date();
-    return {
-      type: "query",
-      action: "query_spent_month",
-      reply: "Conferindo seus gastos do mês 📊",
-      data: { month: now.getMonth() + 1, year: now.getFullYear() }
-    };
-  }
-
-  if (norm.includes("saldo"))
-    return { type: "query", action: "query_balance", reply: "Calculando seu saldo geral 💼" };
-
-  if (/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/.test(norm))
-    return { type: "transaction" };
-
-  return { type: "general" };
-}
-
-//
-// ======================================================================
-// PROCESSAMENTO DA TRANSAÇÃO
-// ======================================================================
-
-function extractTransaction(msg) {
-  const wallets = globalContext.wallets || [];
-  const categories = globalContext.categories || [];
-
-  const norm = normalize(msg);
-
-  const type =
-    /(recebi|ganhei|entrou)/.test(norm)
-      ? "income"
-      : /(paguei|gastei|comprei|custou|transferi|enviei)/.test(norm)
-      ? "expense"
-      : null;
-
-  const amountMatch = norm.match(/(\d+[.,]?\d*)/);
-  const amount = amountMatch ? Number(amountMatch[1].replace(",", ".")) : null;
-
-  const description = inferDescription(norm);
-
-  const account = inferWallet(description, wallets);
-  const { category, suggestions } = guessCategory(description, categories);
-
-  const partial = {
-    type,
-    amount,
-    description,
-    account_name: account,
-    category_name: category,
-    frequency: "variable"
-  };
-
-  if (!amount) {
-    return {
-      needsMoreInfo: true,
-      missingField: "amount",
-      reply: `Qual foi o valor de *${description}*? 💰`,
-      partial
-    };
-  }
-
-  if (!type) {
-    return {
-      needsMoreInfo: true,
-      missingField: "type",
-      reply: "Isso foi *entrada* ou *saída*? 🤔",
-      partial
-    };
-  }
-
-  if (!account) {
-    const list = wallets.map(w => `• ${w.name}`).join("\n");
-    return {
-      needsMoreInfo: true,
-      missingField: "account_name",
-      reply: `Certo! Agora me diga de qual conta saiu ou entrou:\n\n${list}`,
-      partial
-    };
-  }
-
-  if (!category) {
-    if (suggestions && suggestions.length >= 2) {
-      return {
-        needsMoreInfo: true,
-        missingField: "category_name",
-        reply: `A categoria desse lançamento é *${suggestions[0]}* ou *${suggestions[1]}*?`,
-        partial
-      };
-    }
-
-    const list = categories.map(c => `• ${c.name}`).join("\n");
-    return {
-      needsMoreInfo: true,
-      missingField: "category_name",
-      reply: `Escolha uma categoria:\n\n${list}`,
-      partial
-    };
-  }
-
-  const fullData = { ...partial };
-
-  return {
-    needsMoreInfo: false,
-    fullData,
-    confirmation: formatConfirmation(fullData)
-  };
-}
-
-//
-// ======================================================================
-// TRANSCRIÇÃO DE EDIÇÃO DURANTE CONFIRMAÇÃO
-// ======================================================================
-
-function transcribeEdit(text, pending, context) {
-  const wallets = context.wallets || [];
-  const norm = normalize(text);
-
-  // -------- FREQUÊNCIA --------
-  if (
-    norm === "fixa" ||
-    norm === "fixo" ||
-    norm.includes("frequencia fixa") ||
-    norm.includes("freq fixa")
-  ) {
-    return { field: "frequency", value: "fixed" };
-  }
-
-  if (
-    norm === "variavel" ||
-    norm.includes("frequencia variavel") ||
-    norm.includes("freq variavel")
-  ) {
-    return { field: "frequency", value: "variable" };
-  }
-
-  // -------- CATEGORIA (frases) --------
-  if (
-    norm.startsWith("categoria") ||
-    norm.includes("categoria e") ||
-    norm.includes("categoria eh") ||
-    norm.includes("muda categoria") ||
-    norm.includes("troca categoria") ||
-    norm.includes("coloca categoria") ||
-    norm.includes("pra categoria")
-  ) {
-    let cat = norm
-      .replace("categoria e", "")
-      .replace("categoria eh", "")
-      .replace("categoria", "")
-      .replace("muda", "")
-      .replace("troca", "")
-      .replace("coloca", "")
-      .replace("pra", "")
-      .replace("para", "")
-      .trim();
-
-    if (!cat) cat = norm;
-    return { field: "category_name", value: cat };
-  }
-
-  // -------- CATEGORIA (uma palavra) --------
-  if (
-    norm.split(" ").length === 1 &&
-    norm.length <= 20 &&
-    !["sim", "nao", "ok"].includes(norm)
-  ) {
-    // se já tem categoria e a palavra bate mais com conta, não mexe aqui
-    if (wallets.some(w => norm === normalize(String(w.name)))) {
-      return { field: "account_name", value: text.trim() };
-    }
-    return { field: "category_name", value: text.trim() };
-  }
-
-  // -------- CONTA --------
-  if (
-    norm.startsWith("conta") ||
-    norm.includes("troca conta") ||
-    norm.includes("muda conta") ||
-    norm.includes("usa conta") ||
-    norm.includes("na conta") ||
-    norm.includes("banco") ||
-    norm.includes("carteira")
-  ) {
-    let acc = norm
-      .replace("conta", "")
-      .replace("troca", "")
-      .replace("muda", "")
-      .replace("usa", "")
-      .replace("na conta", "")
-      .replace("banco", "")
-      .replace("carteira", "")
-      .trim();
-
-    if (!acc) acc = text.trim();
-    return { field: "account_name", value: acc };
-  }
-
-  // nome de carteira contido no texto
-  if (wallets.length > 0) {
-    const hit = wallets.find(w =>
-      norm.includes(normalize(String(w.name)))
-    );
-    if (hit) {
-      return { field: "account_name", value: hit.name };
-    }
-  }
-
-  // -------- VALOR --------
-  const numberRegex = /^[0-9]+([.,][0-9]+)?$/;
-  if (numberRegex.test(norm) || norm.includes("valor")) {
-    const raw = norm.replace("valor", "").replace("e", "").trim();
-    const n = Number(raw.replace(",", ".") || raw);
-    if (!isNaN(n) && n > 0) {
-      return { field: "amount", value: n };
-    }
-  }
-
-  // -------- DESCRIÇÃO --------
-  if (
-    norm.startsWith("descricao") ||
-    norm.startsWith("descrição") ||
-    norm.includes("muda descricao") ||
-    norm.includes("muda descrição") ||
-    norm.includes("troca descricao") ||
-    norm.includes("troca descrição")
-  ) {
-    let desc = text
-      .toLowerCase()
-      .replace("descrição", "")
-      .replace("descricao", "")
-      .replace("muda", "")
-      .replace("troca", "")
-      .replace("é", "")
-      .trim();
-
-    if (!desc) desc = text.trim();
-    return { field: "description", value: desc };
-  }
-
-  return null;
-}
-
-//
-// ======================================================================
-// INTELIGÊNCIA DE CATEGORIAS
-// ======================================================================
-
-function guessCategory(desc, categories) {
-  if (!categories || categories.length === 0) {
-    return { category: null, suggestions: [] };
-  }
-
-  const text = normalize(desc);
-
-  // match direto pelo nome da categoria
-  const direct = categories.find(c =>
-    text.includes(normalize(String(c.name)))
-  );
-  if (direct) return { category: direct.name, suggestions: [] };
-
-  const map = [
-    { cat: "Aluguel", words: ["aluguel", "aluguer"] },
-    { cat: "Condomínio", words: ["condominio", "condomínio"] },
-    { cat: "IPTU", words: ["iptu"] },
-
-    { cat: "Supermercado", words: ["mercado", "supermercado", "compra do mes"] },
-    { cat: "Padaria", words: ["padaria", "pao", "pão"] },
-    { cat: "Delivery", words: ["ifood", "delivery", "lanche", "restaurante"] },
-
-    { cat: "Combustível", words: ["gasolina", "combustivel", "combustível", "etanol"] },
-    { cat: "Ônibus / Trem / Metrô", words: ["onibus", "ônibus", "trem", "metro", "metrô"] },
-    { cat: "Uber / 99", words: ["uber", "99", "corrida"] },
-
-    { cat: "Energia", words: ["energia", "luz"] },
-    { cat: "Água", words: ["agua", "água"] },
-    { cat: "Gás", words: ["gas", "gás", "botijao", "botijão"] },
-    { cat: "Internet", words: ["internet", "wifi"] },
-    { cat: "Plano de celular", words: ["plano de celular", "recarga", "telefone"] },
-    { cat: "Streaming (Netflix, Prime, etc.)", words: ["netflix", "prime", "disney", "spotify"] },
-
-    { cat: "Farmácia", words: ["farmacia", "farmácia", "remedio", "remédio"] },
-    { cat: "Psicólogo / Terapia", words: ["psicologo", "psicólogo", "terapia"] },
-    { cat: "Dentista", words: ["dentista"] },
-
-    { cat: "Educação", words: ["escola", "faculdade", "curso", "material escolar"] },
-    { cat: "Academia / Esportes", words: ["academia", "musculacao", "musculação", "treino", "esporte"] },
-
-    { cat: "Roupas", words: ["roupa", "camisa", "calca", "calça", "vestido", "blusa"] },
-    { cat: "Calçados", words: ["tenis", "tênis", "sapato", "sandalia", "sandália"] },
-
-    { cat: "Dízimo", words: ["dizimo", "dízimo"] },
-    { cat: "Oferta", words: ["oferta", "ofertinha"] },
-
-    { cat: "Ração", words: ["racao", "ração"] },
-    { cat: "Petshop", words: ["petshop", "banho e tosa"] },
-
-    { cat: "Salário", words: ["salario", "salário", "meu salario", "meu salário"] },
-    { cat: "Extra", words: ["extra", "bico", "freelancer", "freela"] },
-    { cat: "Venda", words: ["venda", "vendi"] },
-    { cat: "Empréstimo", words: ["emprestimo", "empréstimo"] }
-  ];
-
-  const candidates = [];
-
-  for (const item of map) {
-    if (item.words.some(w => text.includes(normalize(w)))) {
-      const found = categories.find(
-        c => normalize(String(c.name)) === normalize(item.cat)
-      );
-      if (found) candidates.push(found.name);
-    }
-  }
-
-  if (candidates.length === 0) return { category: null, suggestions: [] };
-  if (candidates.length === 1) return { category: candidates[0], suggestions: [] };
-
-  return { category: null, suggestions: [...new Set(candidates)] };
-}
-
-//
-// ======================================================================
-// FORMATAR CONFIRMAÇÃO
-// ======================================================================
-
-function formatConfirmation(data) {
-  const amount = Number(data.amount || 0);
-  const emoji = data.type === "expense" ? "🔴 Despesa" : "🟢 Receita";
-  const freq = data.frequency === "fixed" ? "Fixa" : "Variável";
-  const today = new Date().toLocaleDateString("pt-BR");
-
-  return `${emoji} | 📅 ${freq}
-💰 Valor: R$ ${amount.toFixed(2)}
-📝 Descrição: ${data.description || "-"}
-💳 Conta: ${data.account_name || "-"}
-📁 Categoria: ${data.category_name || "-"}
-_${today}_
-
-Confirma o lançamento? Responda *SIM* ou *NÃO*.`;
-}
-
-//
-// ======================================================================
-// OUTROS HELPERS
-// ======================================================================
-
-function inferDescription(msg) {
-  return (
-    msg
-      .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/g, "")
-      .replace(/(\d+[.,]?\d*)/g, "")
-      .trim() || "Lançamento"
-  );
-}
-
-function inferWallet(desc, wallets) {
-  if (!wallets || wallets.length === 0) return null;
-  const d = normalize(desc);
-  const found = wallets.find(w =>
-    d.includes(normalize(String(w.name)))
-  );
-  return found ? found.name : null;
-}
-
-function normalize(str) {
-  return String(str)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
 }
