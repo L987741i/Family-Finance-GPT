@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import formidable from "formidable";
+import fs from "fs";
 
 export const config = {
   api: {
@@ -27,23 +28,25 @@ export default async function handler(req, res) {
     });
 
     if (!files.audio) {
-      return res.status(400).json({ error: "Áudio não enviado" });
+      return res.status(400).json({ error: "Arquivo de áudio não enviado" });
     }
 
-    const audio = files.audio;
+    const audioPath = files.audio.filepath;
 
     const transcription = await openai.audio.transcriptions.create({
-      file: {
-        buffer: await audio.toBuffer(),
-        name: audio.originalFilename || "audio.wav",
-      },
+      file: fs.createReadStream(audioPath),
       model: "whisper-1",
       language: "pt",
     });
 
-    res.status(200).json({ text: transcription.text });
+    return res.status(200).json({
+      text: transcription.text,
+    });
   } catch (err) {
     console.error("ERRO REAL:", err);
-    res.status(500).json({ error: "Erro interno na transcrição" });
+    return res.status(500).json({
+      error: "Erro interno na transcrição",
+      detail: err.message,
+    });
   }
 }
