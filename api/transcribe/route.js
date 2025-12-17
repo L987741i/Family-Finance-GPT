@@ -18,6 +18,12 @@ export async function POST(request) {
       );
     }
 
+    console.log("Audio recebido:", {
+      name: audio.name,
+      type: audio.type,
+      size: audio.size,
+    });
+
     const transcription = await openai.audio.transcriptions.create({
       file: audio,
       model: "whisper-1",
@@ -25,13 +31,17 @@ export async function POST(request) {
     });
 
     return new Response(
-      JSON.stringify({ text: transcription.text }),
+      JSON.stringify({
+        text: transcription.text,
+      }),
       { status: 200 }
     );
   } catch (err) {
-    console.error("ERRO REAL:", err);
+    console.error("Erro OpenAI:", err);
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({
+        error: err.message,
+      }),
       { status: 500 }
     );
   }
