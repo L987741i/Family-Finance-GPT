@@ -1,10 +1,4 @@
-import OpenAI from "openai";
-
 export const runtime = "nodejs";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 export async function POST(request) {
   try {
@@ -18,12 +12,11 @@ export async function POST(request) {
       );
     }
 
-    // 🔎 LOGS DE SANIDADE (IMPORTANTES)
+    // 🔎 Logs reais
     console.log("Audio recebido:", {
       name: audio.name,
       type: audio.type,
       size: audio.size,
-      constructor: audio.constructor?.name,
     });
 
     if (!audio.size || audio.size === 0) {
@@ -33,32 +26,53 @@ export async function POST(request) {
       );
     }
 
-    // ✅ CONVERSÃO CRÍTICA (WHATSAPP SAFE)
+    // Converter para ArrayBuffer
     const arrayBuffer = await audio.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    const transcription = await openai.audio.transcriptions.create({
-      file: {
-        value: buffer,
-        options: {
-          filename: audio.name || "audio.ogg",
-          contentType: audio.type || "audio/ogg",
+    // Criar FormData MANUAL para OpenAI
+    const openaiForm = new FormData();
+    openaiForm.append(
+      "file",
+      new Blob([buffer], { type: "audio/wav" }),
+      "audio.wav"
+    );
+    openaiForm.append("model", "whisper-1");
+    openaiForm.append("language", "pt");
+
+    // 🔥 CHAMADA DIRETA À API DA OPENAI (SEM SDK)
+    const openaiRes = await fetch(
+      "https://api.openai.com/v1/audio/transcriptions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
-      },
-      model: "whisper-1",
-      language: "pt",
-    });
+        body: openaiForm,
+      }
+    );
+
+    const result = await openaiRes.json();
+
+    if (!openaiRes.ok) {
+      console.error("OpenAI RAW ERROR:", result);
+      return new Response(
+        JSON.stringify({
+          error: "Erro OpenAI",
+          detail: result,
+        }),
+        { status: 500 }
+      );
+    }
 
     return new Response(
-      JSON.stringify({ text: transcription.text }),
+      JSON.stringify({ text: result.text }),
       { status: 200 }
     );
   } catch (err) {
-    console.error("ERRO REAL OPENAI:", err);
+    console.error("ERRO FATAL:", err);
     return new Response(
-      JSON.stringify({
-        error: err.message || "Erro interno na transcrição",
-      }),
+      JSON.stringify({ error: err.message }),
       { status: 500 }
     );
   }
