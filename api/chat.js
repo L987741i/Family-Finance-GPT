@@ -139,11 +139,38 @@ function findBestCategory(text, type = "expense") {
 //
 
 function inferDescription(msg) {
-  return msg
-    .replace(/(paguei|gastei|comprei|recebi|ganhei)/gi, "")
-    .replace(/(\d+[.,]?\d*)/g, "")
-    .trim() || "Lançamento";
+  let text = msg.toLowerCase();
+
+  // 1. Remove verbos financeiros
+  text = text.replace(
+    /(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/gi,
+    ""
+  );
+
+  // 2. Remove valores numéricos
+  text = text.replace(/\d+[.,]?\d*/g, "");
+
+  // 3. Remove valores por extenso
+  Object.keys(NUMBER_WORDS).forEach(word => {
+    const r = new RegExp(`\\b${word}\\b`, "gi");
+    text = text.replace(r, "");
+  });
+
+  // 4. Remove palavras inúteis
+  text = text.replace(
+    /\b(por|reais|real|com|de|uma|um|uns|umas)\b/gi,
+    ""
+  );
+
+  // 5. Limpa espaços extras
+  text = text.replace(/\s+/g, " ").trim();
+
+  // 6. Capitaliza
+  if (!text) return "Lançamento";
+
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
 
 //
 // ======================================================================
