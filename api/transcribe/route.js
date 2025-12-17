@@ -1,5 +1,3 @@
-import FormData from "form-data";
-
 export const runtime = "nodejs";
 
 export async function POST(request) {
@@ -8,73 +6,56 @@ export async function POST(request) {
     const audio = incomingForm.get("audio");
 
     if (!audio) {
-      return new Response(
-        JSON.stringify({ error: "Áudio não enviado" }),
-        { status: 400 }
-      );
+      return Response.json({ error: "Áudio não enviado" }, { status: 400 });
     }
-
-    const arrayBuffer = await audio.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
 
     console.log("Audio recebido:", {
       name: audio.name,
       type: audio.type,
-      size: buffer.length,
+      size: audio.size,
     });
 
-    // 🔥 FormData REAL (Node-safe)
-    const form = new FormData();
-    form.append("file", buffer, {
-      filename: "audio.wav",
-      contentType: "audio/wav",
-    });
-    form.append("model", "whisper-1");
-    form.append("language", "pt");
+    const arrayBuffer = await audio.arrayBuffer();
 
-    const openaiRes = await fetch(
+    // 👉 Web FormData (NATIVO)
+    const openaiForm = new FormData();
+    openaiForm.append(
+      "file",
+      new Blob([arrayBuffer], { type: audio.type || "audio/ogg" }),
+      "audio.ogg"
+    );
+    openaiForm.append("model", "whisper-1");
+    openaiForm.append("language", "pt");
+
+    const res = await fetch(
       "https://api.openai.com/v1/audio/transcriptions",
       {
         method: "POST",
         headers: {
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          ...form.getHeaders(), // ⚠️ boundary correto
         },
-        body: form,
+        body: openaiForm,
       }
     );
 
-    const resultText = await openaiRes.text();
+    const text = await res.text();
 
-    if (!openaiRes.ok) {
-      console.error("OpenAI error:", resultText);
-      return new Response(
-        JSON.stringify({
-          error: "Erro OpenAI",
-          detail: resultText,
-        }),
+    if (!res.ok) {
+      console.error("OpenAI error:", text);
+      return Response.json(
+        { error: "Erro OpenAI", detail: text },
         { status: 500 }
       );
     }
 
-    const result = JSON.parse(resultText);
+    const json = JSON.parse(text);
 
-    return new Response(
-      JSON.stringify({ text: result.text }),
-      { status: 200 }
-    );
+    return Response.json({ text: json.text });
   } catch (err) {
-    console.error("ERRO FATAL:", err);
-    return new Response(
-      JSON.stringify({ error: err.message }),
+    console.error("CRASH:", err);
+    return Response.json(
+      { error: err.message },
       { status: 500 }
     );
   }
-}
-
-export async function GET() {
-  return new Response(
-    JSON.stringify({ error: "Use POST" }),
-    { status: 405 }
-  );
 }
