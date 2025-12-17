@@ -28,13 +28,11 @@ export default async function handler(req, res) {
     });
 
     if (!files.audio) {
-      return res.status(400).json({ error: "Arquivo de áudio não enviado" });
+      return res.status(400).json({ error: "Áudio não enviado" });
     }
 
-    const audioPath = files.audio.filepath;
-
     const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(audioPath),
+      file: fs.createReadStream(files.audio.filepath),
       model: "whisper-1",
       language: "pt",
     });
@@ -45,8 +43,7 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error("ERRO REAL:", err);
     return res.status(500).json({
-      error: "Erro interno na transcrição",
-      detail: err.message,
+      error: err.message,
     });
   }
 }
