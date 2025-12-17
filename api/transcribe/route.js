@@ -1,9 +1,11 @@
+import FormData from "form-data";
+
 export const runtime = "nodejs";
 
 export async function POST(request) {
   try {
-    const formData = await request.formData();
-    const audio = formData.get("audio");
+    const incomingForm = await request.formData();
+    const audio = incomingForm.get("audio");
 
     if (!audio) {
       return new Response(
@@ -12,58 +14,50 @@ export async function POST(request) {
       );
     }
 
-    // 🔎 Logs reais
-    console.log("Audio recebido:", {
-      name: audio.name,
-      type: audio.type,
-      size: audio.size,
-    });
-
-    if (!audio.size || audio.size === 0) {
-      return new Response(
-        JSON.stringify({ error: "Arquivo de áudio vazio" }),
-        { status: 400 }
-      );
-    }
-
-    // Converter para ArrayBuffer
     const arrayBuffer = await audio.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // Criar FormData MANUAL para OpenAI
-    const openaiForm = new FormData();
-    openaiForm.append(
-      "file",
-      new Blob([buffer], { type: "audio/wav" }),
-      "audio.wav"
-    );
-    openaiForm.append("model", "whisper-1");
-    openaiForm.append("language", "pt");
+    console.log("Audio recebido:", {
+      name: audio.name,
+      type: audio.type,
+      size: buffer.length,
+    });
 
-    // 🔥 CHAMADA DIRETA À API DA OPENAI (SEM SDK)
+    // 🔥 FormData REAL (Node-safe)
+    const form = new FormData();
+    form.append("file", buffer, {
+      filename: "audio.wav",
+      contentType: "audio/wav",
+    });
+    form.append("model", "whisper-1");
+    form.append("language", "pt");
+
     const openaiRes = await fetch(
       "https://api.openai.com/v1/audio/transcriptions",
       {
         method: "POST",
         headers: {
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          ...form.getHeaders(), // ⚠️ boundary correto
         },
-        body: openaiForm,
+        body: form,
       }
     );
 
-    const result = await openaiRes.json();
+    const resultText = await openaiRes.text();
 
     if (!openaiRes.ok) {
-      console.error("OpenAI RAW ERROR:", result);
+      console.error("OpenAI error:", resultText);
       return new Response(
         JSON.stringify({
           error: "Erro OpenAI",
-          detail: result,
+          detail: resultText,
         }),
         { status: 500 }
       );
     }
+
+    const result = JSON.parse(resultText);
 
     return new Response(
       JSON.stringify({ text: result.text }),
