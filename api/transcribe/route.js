@@ -18,29 +18,46 @@ export async function POST(request) {
       );
     }
 
+    // 🔎 LOGS DE SANIDADE (IMPORTANTES)
     console.log("Audio recebido:", {
       name: audio.name,
       type: audio.type,
       size: audio.size,
+      constructor: audio.constructor?.name,
     });
 
+    if (!audio.size || audio.size === 0) {
+      return new Response(
+        JSON.stringify({ error: "Arquivo de áudio vazio" }),
+        { status: 400 }
+      );
+    }
+
+    // ✅ CONVERSÃO CRÍTICA (WHATSAPP SAFE)
+    const arrayBuffer = await audio.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
     const transcription = await openai.audio.transcriptions.create({
-      file: audio,
+      file: {
+        value: buffer,
+        options: {
+          filename: audio.name || "audio.ogg",
+          contentType: audio.type || "audio/ogg",
+        },
+      },
       model: "whisper-1",
       language: "pt",
     });
 
     return new Response(
-      JSON.stringify({
-        text: transcription.text,
-      }),
+      JSON.stringify({ text: transcription.text }),
       { status: 200 }
     );
   } catch (err) {
-    console.error("Erro OpenAI:", err);
+    console.error("ERRO REAL OPENAI:", err);
     return new Response(
       JSON.stringify({
-        error: err.message,
+        error: err.message || "Erro interno na transcrição",
       }),
       { status: 500 }
     );
