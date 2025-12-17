@@ -1,14 +1,6 @@
 export const runtime = "nodejs";
 
 import OpenAI from "openai";
-import formidable from "formidable";
-import fs from "fs";
-
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -20,21 +12,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    const form = formidable({ multiples: false });
+    const formData = await req.formData();
+    const audio = formData.get("audio");
 
-    const { files } = await new Promise((resolve, reject) => {
-      form.parse(req, (err, fields, files) => {
-        if (err) reject(err);
-        else resolve({ files });
-      });
-    });
-
-    if (!files.audio) {
+    if (!audio) {
       return res.status(400).json({ error: "Áudio não enviado" });
     }
 
     const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(files.audio.filepath),
+      file: audio,
       model: "whisper-1",
       language: "pt",
     });
