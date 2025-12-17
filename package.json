@@ -1,8 +1,8 @@
 {
-  "name": "family-finance-gpt",
-  "version": "1.0.0",
+  "name": "transcricao-api",
+  "private": true,
   "type": "module",
   "dependencies": {
-    "openai": "4.53.0"
+    "openai": "^4.0.0"
   }
 }
