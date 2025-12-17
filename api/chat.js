@@ -1,11 +1,15 @@
 // /api/chat.js — IA Financeira + Lovable
-// Versão FINAL 2025 — Suporte a números por extenso + WhatsApp + estabilidade total
+// VERSÃO FINAL ESTÁVEL 2025
+// ✔ Categoria obrigatória
+// ✔ Números por extenso
+// ✔ WhatsApp ready
+// ✔ Produção
 
 let globalContext = {};
 
 //
 // ======================================================================
-// 🔢 CONVERSÃO DE NÚMEROS POR EXTENSO (PT-BR)
+// 🔢 NÚMEROS POR EXTENSO (PT-BR)
 // ======================================================================
 //
 
@@ -78,32 +82,54 @@ function parseNumberFromTextPT(text) {
 
 //
 // ======================================================================
-// 🧠 1) CATEGORIAS
+// 🧠 CATEGORIAS (OBRIGATÓRIAS)
 // ======================================================================
 //
 
 const CATEGORY_TREE = {
   expense: [
     {
-      group: "Casa & Manutenção",
+      group: "Moradia",
       items: [
-        { name: "Móveis", keywords: ["máquina", "lavar", "sofá", "cama", "mesa"] },
-        { name: "Reforma", keywords: ["reforma", "obra"] }
+        { name: "Aluguel", keywords: ["aluguel"] },
+        { name: "Financiamento / Prestação", keywords: ["financiamento", "prestação"] },
+        { name: "Condomínio", keywords: ["condomínio"] },
+        { name: "IPTU", keywords: ["iptu"] },
+        { name: "Reformas e manutenção", keywords: ["reforma", "obra", "manutenção"] },
+        { name: "Limpeza da casa", keywords: ["limpeza"] },
+        { name: "Mobília e decoração", keywords: ["sofá", "cadeira", "mesa", "cama"] },
+        { name: "Serviços domésticos", keywords: ["faxina", "diarista"] }
       ]
     },
     {
       group: "Alimentação",
       items: [
         { name: "Supermercado", keywords: ["mercado"] },
-        { name: "Restaurante", keywords: ["almoço", "jantar"] }
+        { name: "Açougue / Peixaria", keywords: ["açougue", "peixe"] },
+        { name: "Hortifruti", keywords: ["feira"] },
+        { name: "Padaria", keywords: ["padaria", "pão"] },
+        { name: "Delivery", keywords: ["delivery", "ifood"] },
+        { name: "Restaurante / Lanches fora", keywords: ["restaurante", "almoço", "jantar", "lanche"] }
       ]
+    },
+    {
+      group: "Outros",
+      items: [{ name: "Outros", keywords: [] }]
     }
   ],
+
   income: [
     {
       group: "Receita",
       items: [
-        { name: "Salário", keywords: ["salário", "pagamento"] }
+        { name: "Salário", keywords: ["salário"] },
+        { name: "Extra", keywords: ["extra"] },
+        { name: "Freelancer", keywords: ["freelancer"] },
+        { name: "Venda", keywords: ["venda"] },
+        { name: "Empréstimo", keywords: ["empréstimo"] },
+        { name: "Juros", keywords: ["juros"] },
+        { name: "Benefícios", keywords: ["benefício"] },
+        { name: "Lanche Escolar", keywords: ["lanche escolar"] }
       ]
     }
   ]
@@ -129,58 +155,42 @@ function findBestCategory(text, type = "expense") {
     }
   }
 
-  return { best, score: bestScore };
+  if (!best && type === "expense") return "Outros / Outros";
+  if (!best && type === "income") return "Receita / Extra";
+
+  return best;
 }
 
 //
 // ======================================================================
-// 🔍 2) DESCRIÇÃO
+// 📝 DESCRIÇÃO INTELIGENTE
 // ======================================================================
 //
 
-function inferDescription(msg) {
-  let text = msg.toLowerCase();
+function inferDescription(msg, category) {
+  if (category && category.includes("/")) {
+    return category.split("/")[1].trim();
+  }
 
-  // 1. Remove verbos financeiros
-  text = text.replace(
-    /(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|enviei)/gi,
-    ""
-  );
+  let text = msg
+    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou)/gi, "")
+    .replace(/\d+[.,]?\d*/g, "")
+    .trim();
 
-  // 2. Remove valores numéricos
-  text = text.replace(/\d+[.,]?\d*/g, "");
-
-  // 3. Remove valores por extenso
-  Object.keys(NUMBER_WORDS).forEach(word => {
-    const r = new RegExp(`\\b${word}\\b`, "gi");
-    text = text.replace(r, "");
-  });
-
-  // 4. Remove palavras inúteis
-  text = text.replace(
-    /\b(por|reais|real|com|de|uma|um|uns|umas)\b/gi,
-    ""
-  );
-
-  // 5. Limpa espaços extras
-  text = text.replace(/\s+/g, " ").trim();
-
-  // 6. Capitaliza
-  if (!text) return "Lançamento";
-
-  return text.charAt(0).toUpperCase() + text.slice(1);
+  return text
+    ? text.charAt(0).toUpperCase() + text.slice(1)
+    : "Lançamento";
 }
 
-
 //
 // ======================================================================
-// 📦 3) CONFIRMAÇÃO
+// 📦 CONFIRMAÇÃO
 // ======================================================================
 //
 
 function formatConfirmation(data) {
   const today = new Date().toLocaleDateString("pt-BR");
-  return `🔴 Despesa | 📅 Variável
+  return `🔴 ${data.type === "income" ? "Receita" : "Despesa"} | 📅 Variável
 💰 Valor: R$ ${data.amount.toFixed(2)}
 📝 Descrição: ${data.description}
 📁 Categoria: ${data.category_name}
@@ -191,26 +201,22 @@ Confirma o lançamento? (Sim/Não)`;
 
 //
 // ======================================================================
-// 🧠 4) EXTRAÇÃO DE TRANSAÇÃO
+// 🧠 EXTRAÇÃO DE TRANSAÇÃO
 // ======================================================================
 //
 
 function extractTransaction(msg) {
-  const type = /(recebi|ganhei|salário)/.test(msg) ? "income" : "expense";
+  const type = /(recebi|ganhei|salário|venda)/i.test(msg)
+    ? "income"
+    : "expense";
 
-  // 1️⃣ número digitado
   const numericMatch = msg.match(/(\d+[.,]?\d*)/);
   let amount = numericMatch
     ? Number(numericMatch[1].replace(",", "."))
-    : null;
+    : parseNumberFromTextPT(msg);
 
-  // 2️⃣ número por extenso
-  if (!amount) {
-    amount = parseNumberFromTextPT(msg);
-  }
-
-  const description = inferDescription(msg);
-  const { best: category } = findBestCategory(description, type);
+  const category = findBestCategory(msg, type);
+  const description = inferDescription(msg, category);
 
   if (!amount) {
     return {
@@ -231,6 +237,7 @@ function extractTransaction(msg) {
       frequency: "variable"
     },
     confirmation: formatConfirmation({
+      type,
       amount,
       description,
       category_name: category
@@ -240,7 +247,7 @@ function extractTransaction(msg) {
 
 //
 // ======================================================================
-// 🧠 5) INTENÇÃO
+// 🎯 INTENÇÃO
 // ======================================================================
 //
 
@@ -252,7 +259,7 @@ function detectIntent(msg) {
 
 //
 // ======================================================================
-// 🚀 6) HANDLER PRINCIPAL
+// 🚀 HANDLER PRINCIPAL
 // ======================================================================
 //
 
@@ -265,7 +272,6 @@ export default async function handler(req, res) {
     const { message, context } = req.body;
     globalContext = context || {};
     const pending = context?.pending_transaction || null;
-
     const msg = message.toLowerCase().trim();
 
     if (pending) {
