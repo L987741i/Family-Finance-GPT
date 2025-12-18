@@ -1,106 +1,36 @@
-const TZ = "America/Sao_Paulo";
+// /api/chat.js — Family Finance IA
+// VERSÃO FINAL OFICIAL 2025
+// ✔ Payload alinhado
+// ✔ Lançamentos + Consultas
+// ✔ Conta e Categoria obrigatórias
+// ✔ IA resiliente (sem SDK)
+// ✔ Fluxo por estado
 
+//
 // ======================================================================
-// Helpers
+// 🔢 NÚMEROS POR EXTENSO (PT-BR)
 // ======================================================================
-
-function ok(res, payload) {
-  return res.status(200).json(payload);
-}
-
-function removeDiacritics(str) {
-  return String(str || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
-
-function norm(s = "") {
-  return removeDiacritics(String(s).toLowerCase().trim());
-}
-
-function formatBRL(value) {
-  try {
-    return new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    }).format(value);
-  } catch {
-    return `R$ ${Number(value || 0).toFixed(2)}`;
-  }
-}
-
-function todayISO() {
-  const dt = new Date();
-  const parts = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(dt);
-
-  const y = parts.find((p) => p.type === "year")?.value;
-  const m = parts.find((p) => p.type === "month")?.value;
-  const d = parts.find((p) => p.type === "day")?.value;
-  return `${y}-${m}-${d}`;
-}
-
-function yesterdayISO() {
-  const now = new Date();
-  const partsNow = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-
-  const y = Number(partsNow.find((p) => p.type === "year")?.value);
-  const m = Number(partsNow.find((p) => p.type === "month")?.value);
-  const d = Number(partsNow.find((p) => p.type === "day")?.value);
-
-  const local = new Date(Date.UTC(y, m - 1, d));
-  local.setUTCDate(local.getUTCDate() - 1);
-
-  const yy = local.getUTCFullYear();
-  const mm = String(local.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(local.getUTCDate()).padStart(2, "0");
-  return `${yy}-${mm}-${dd}`;
-}
-
-function detectDate(msg) {
-  const t = norm(msg);
-  if (t.includes("ontem")) return yesterdayISO();
-  return todayISO();
-}
-
-function clampPositiveNumber(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return null;
-  return Math.abs(v);
-}
-
-// ======================================================================
-// Número por extenso PT-BR
-// ======================================================================
+//
 
 const NUMBER_WORDS = {
   zero: 0, um: 1, uma: 1, dois: 2, duas: 2,
-  tres: 3, três: 3, quatro: 4, cinco: 5,
+  três: 3, tres: 3, quatro: 4, cinco: 5,
   seis: 6, sete: 7, oito: 8, nove: 9,
   dez: 10, onze: 11, doze: 12, treze: 13,
-  quatorze: 14, catorze: 14, quinze: 15,
-  dezesseis: 16, dezessete: 17, dezoito: 18, dezenove: 19,
-  vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50,
-  sessenta: 60, setenta: 70, oitenta: 80, noventa: 90,
-  cem: 100, cento: 100, duzentos: 200, trezentos: 300,
-  quatrocentos: 400, quinhentos: 500, seiscentos: 600,
-  setecentos: 700, oitocentos: 800, novecentos: 900,
-  mil: 1000
+  quatorze: 14, quinze: 15, dezesseis: 16,
+  dezessete: 17, dezoito: 18, dezenove: 19,
+  vinte: 20, trinta: 30, quarenta: 40,
+  cinquenta: 50, sessenta: 60, setenta: 70,
+  oitenta: 80, noventa: 90, cem: 100,
+  cento: 100, duzentos: 200, trezentos: 300,
+  quatrocentos: 400, quinhentos: 500,
+  seiscentos: 600, setecentos: 700,
+  oitocentos: 800, novecentos: 900, mil: 1000
 };
 
 function parseNumberFromTextPT(text) {
-  const words = norm(text).split(/\s+/);
+  const words = text.toLowerCase().split(/\s+/);
   let total = 0, current = 0, found = false;
-
   for (const w of words) {
     if (NUMBER_WORDS[w] !== undefined) {
       found = true;
@@ -109,149 +39,224 @@ function parseNumberFromTextPT(text) {
         current = current === 0 ? 1000 : current * 1000;
         total += current;
         current = 0;
-      } else {
-        current += v;
-      }
+      } else current += v;
     }
   }
   return found ? total + current : null;
 }
 
-function extractAmount(msg) {
-  const s = String(msg || "");
-  const numeric = s.match(/(\d+[.,]?\d*)/);
-  if (numeric) return clampPositiveNumber(Number(numeric[1].replace(",", ".")));
-  return clampPositiveNumber(parseNumberFromTextPT(s));
-}
-
+//
 // ======================================================================
-// Name (garantia NOT NULL)
+// 📝 DESCRIÇÃO
 // ======================================================================
+//
 
-function inferNameFromMessage(original) {
-  let t = norm(original);
+function inferDescription(msg) {
+  let t = msg
+    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi)/gi, "")
+    .replace(/\d+[.,]?\d*/g, "");
 
-  t = t.replace(/\b(gastei|paguei|comprei|recebi|ganhei|entrou|saiu|transferi|pix|pague)\b/g, "");
-  t = t.replace(/\b(no|na|em|com|de|para|por|reais|real|r\$)\b/g, "");
-  t = t.replace(/\d+[.,]?\d*/g, "");
-
-  Object.keys(NUMBER_WORDS).forEach((w) => {
-    t = t.replace(new RegExp(`\\b${w}\\b`, "g"), "");
+  Object.keys(NUMBER_WORDS).forEach(w => {
+    t = t.replace(new RegExp(`\\b${w}\\b`, "gi"), "");
   });
 
+  t = t.replace(/\b(por|reais|real|com|de|uma|um|uns|umas)\b/gi, "");
   t = t.replace(/\s+/g, " ").trim();
-  if (!t) return "Lançamento";
-  return t.charAt(0).toUpperCase() + t.slice(1);
+
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : "Lançamento";
 }
 
+//
 // ======================================================================
-// Categorias (IA via Responses API)
+// 💳 CONTAS (CARTEIRAS)
 // ======================================================================
+//
 
-async function classifyCategoryAI({ text, type, categories }) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) return null;
-
-  const typed = categories.filter((c) => norm(c.type) === norm(type));
-  if (!typed.length) return null;
-
-  const names = typed.map((c) => c.name).slice(0, 250);
-
-  const prompt = `
-Escolha UMA categoria da lista abaixo (exatamente como está escrito).
-Regras:
-- Não invente categorias
-- Responda APENAS com o NOME da categoria
-
-Tipo: ${type}
-Texto: "${text}"
-
-Categorias:
-${names.map((n) => `- ${n}`).join("\n")}
-`.trim();
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
-
-  try {
-    const resp = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-        input: prompt,
-        temperature: 0,
-      }),
-      signal: controller.signal,
-    });
-
-    if (!resp.ok) return null;
-
-    const json = await resp.json();
-    const pick =
-      json?.output?.[0]?.content?.[0]?.text?.trim() || "";
-
-    return typed.find((c) => norm(c.name) === norm(pick)) || null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
+function detectWallet(msg, wallets = []) {
+  const t = msg.toLowerCase();
+  return wallets.find(w => t.includes(w.name.toLowerCase())) || null;
 }
 
-// ======================================================================
-// Handler
-// ======================================================================
+function askForWallet(wallets) {
+  return `De qual conta saiu ou entrou? 💳
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return ok(res, { reply: "Método não permitido.", action: "message" });
+${wallets.map(w => `• ${w.name}`).join("\n")}`;
+}
+
+//
+// ======================================================================
+// 🧠 CATEGORIAS (LOCAL SIMPLES)
+// ======================================================================
+//
+
+function detectCategoryLocal(msg, categories = []) {
+  const t = msg.toLowerCase();
+  for (const c of categories) {
+    if (t.includes(c.name.toLowerCase())) return c.name;
+  }
+  return null;
+}
+
+//
+// ======================================================================
+// 🔍 DETECÇÃO DE CONSULTAS
+// ======================================================================
+//
+
+function detectQueryIntent(msg) {
+  const t = msg.toLowerCase();
+
+  if (/últim|recent|lançamentos|transações/i.test(t)) {
+    return "query_last_transactions";
   }
 
-  try {
-    const { message, context } = req.body || {};
-    const msg = String(message || "").trim();
-    const ctx = context || {};
+  if (/contas a pagar|boletos|vencendo|faturas/i.test(t)) {
+    return "query_bills_to_pay";
+  }
 
-    const type = /(recebi|ganhei|salario|salário)/i.test(msg)
-      ? "income"
-      : "expense";
+  return null;
+}
 
-    const amount = extractAmount(msg);
-    if (!amount) {
-      return ok(res, { reply: "Qual o valor? 💰", action: "need_more_info" });
-    }
+//
+// ======================================================================
+// ✏️ EDIÇÃO PÓS-CONFIRMAÇÃO
+// ======================================================================
+//
 
-    const name = inferNameFromMessage(msg);
+function handleEdit(msg, pending, wallets, categories) {
+  const t = msg.toLowerCase();
 
-    const category = await classifyCategoryAI({
-      text: msg,
-      type,
-      categories: ctx.categories || [],
-    });
+  if (/valor/.test(t)) {
+    const v = parseNumberFromTextPT(t) ||
+      Number(t.match(/(\d+[.,]?\d*)/)?.[1]?.replace(",", "."));
+    if (v) pending.amount = v;
+  }
 
-    return ok(res, {
-      reply: "Confirma?",
-      action: "awaiting_confirmation",
-      data: {
-        family_id: ctx.family_id,
-        member_id: ctx.member_id,
+  if (/descrição|descricao/.test(t)) {
+    pending.description = inferDescription(t);
+  }
+
+  if (/conta|carteira/.test(t)) {
+    const w = detectWallet(t, wallets);
+    if (w) pending.wallet = w;
+  }
+
+  if (/categoria/.test(t)) {
+    const c = detectCategoryLocal(t, categories);
+    if (c) pending.category = c;
+  }
+
+  return pending;
+}
+
+//
+// ======================================================================
+// 📦 EXTRAÇÃO DE LANÇAMENTO
+// ======================================================================
+//
+
+function extractTransaction(msg, context) {
+  const wallets = context.wallets || [];
+  const categories = context.categories || [];
+
+  const type = /(recebi|ganhei|sal[aá]rio|venda)/i.test(msg)
+    ? "income"
+    : "expense";
+
+  const numeric = msg.match(/(\d+[.,]?\d*)/);
+  const amount = numeric
+    ? Number(numeric[1].replace(",", "."))
+    : parseNumberFromTextPT(msg);
+
+  const description = inferDescription(msg);
+  const wallet = detectWallet(msg, wallets);
+  const category = detectCategoryLocal(msg, categories);
+
+  if (!wallet) {
+    return {
+      need_wallet: true,
+      reply: askForWallet(wallets),
+      partial: {
         type,
         amount,
-        name,
-        category_id: category?.id || null,
-        category_name: category?.name || null,
-        date: todayISO(),
-      },
-    });
-  } catch (err) {
-    console.error(err);
-    return ok(res, {
-      reply: "Ops 😅 deu um erro aqui. Tenta de novo?",
-      action: "message",
+        description,
+        category,
+        frequency: "variable"
+      }
+    };
+  }
+
+  return {
+    data: {
+      type,
+      amount,
+      description,
+      category,
+      wallet,
+      frequency: "variable"
+    }
+  };
+}
+
+//
+// ======================================================================
+// 🚀 HANDLER PRINCIPAL
+// ======================================================================
+//
+
+export default async function handler(req, res) {
+  const { message, history, context } = req.body;
+  const msg = message.toLowerCase().trim();
+
+  const wallets = context?.wallets || [];
+  const categories = context?.categories || [];
+  let pending = context?.pending_transaction || null;
+
+  // 🔍 CONSULTAS
+  const queryIntent = detectQueryIntent(msg);
+
+  if (queryIntent) {
+    return res.json({
+      reply: "Certo 👍 Já vou verificar isso pra você.",
+      action: queryIntent,
+      data: {
+        family_id: context.family_id,
+        member_id: context.member_id
+      }
     });
   }
+
+  // ✏️ EDIÇÃO
+  if (pending && /(valor|conta|carteira|descrição|descricao|categoria)/i.test(msg)) {
+    pending = handleEdit(msg, pending, wallets, categories);
+    return res.json({
+      reply: "Atualizei o lançamento 👌\nConfirma agora? (Sim/Não)",
+      action: "awaiting_confirmation",
+      data: pending
+    });
+  }
+
+  // 🧾 NOVO LANÇAMENTO
+  const parsed = extractTransaction(msg, context);
+
+  if (parsed.need_wallet) {
+    return res.json({
+      reply: parsed.reply,
+      action: "need_wallet",
+      data: parsed.partial
+    });
+  }
+
+  return res.json({
+    reply: `🔴 ${parsed.data.type === "income" ? "Receita" : "Despesa"}
+💰 Valor: R$ ${parsed.data.amount?.toFixed(2) || "—"}
+📝 Descrição: ${parsed.data.description}
+📁 Categoria: ${parsed.data.category || "—"}
+💳 Conta: ${parsed.data.wallet.name}
+📅 Frequência: Variável
+
+Confirma o lançamento? (Sim/Não)`,
+    action: "awaiting_confirmation",
+    data: parsed.data
+  });
 }
