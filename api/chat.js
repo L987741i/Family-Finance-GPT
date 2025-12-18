@@ -1,16 +1,10 @@
 // /api/chat.js — Family Finance IA
-// VERSÃO FINAL RESILIENTE 2025
+// VERSÃO FINAL 2025 (SEM SDK)
+// ✔ fetch nativo
 // ✔ Regras locais + IA
 // ✔ Retry / Timeout
-// ✔ Fallback seguro
 // ✔ Categoria obrigatória
 // ✔ Descrição inteligente
-
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
 
 //
 // ======================================================================
@@ -115,8 +109,8 @@ const ALL_CATEGORIES = {
 
     "Contas Mensais / Energia",
     "Contas Mensais / Água",
-    "Contas Mensais / Internet",
     "Contas Mensais / Gás",
+    "Contas Mensais / Internet",
 
     "Mercado & Casa / Utensílios domésticos",
     "Mercado & Casa / Produtos de limpeza",
@@ -135,7 +129,7 @@ const ALL_CATEGORIES = {
 
 //
 // ======================================================================
-// 🧩 CLASSIFICAÇÃO LOCAL (BARATA E RÁPIDA)
+// 🧩 CLASSIFICAÇÃO LOCAL (RÁPIDA)
 // ======================================================================
 //
 
@@ -164,13 +158,35 @@ function findBestCategoryLocal(text, type) {
 
 //
 // ======================================================================
-// 🤖 CLASSIFICAÇÃO COM IA (RESILIENTE)
+// 🤖 CHAMADA OPENAI (FETCH NATIVO)
 // ======================================================================
 //
 
+async function callOpenAI(prompt, signal) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+      temperature: 0,
+      messages: [{ role: "user", content: prompt }]
+    }),
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error("OpenAI API error");
+  }
+
+  const data = await response.json();
+  return data.choices[0].message.content.trim();
+}
+
 async function classifyWithAI(text, type) {
   const categories = ALL_CATEGORIES[type];
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
   const prompt = `
 Classifique a frase abaixo em UMA das categorias listadas.
@@ -191,18 +207,9 @@ ${categories.map(c => "- " + c).join("\n")}
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12000);
 
-      const response = await openai.chat.completions.create(
-        {
-          model,
-          temperature: 0,
-          messages: [{ role: "user", content: prompt }]
-        },
-        { signal: controller.signal }
-      );
+      const result = await callOpenAI(prompt, controller.signal);
 
       clearTimeout(timeout);
-
-      const result = response.choices?.[0]?.message?.content?.trim();
 
       if (categories.includes(result)) return result;
 
@@ -250,7 +257,7 @@ function inferDescription(msg, category) {
 //
 
 async function extractTransaction(msg) {
-  const type = /(recebi|ganhei|salário|venda|freelancer)/i.test(msg)
+  const type = /(recebi|ganhei|sal[aá]rio|venda|freelancer)/i.test(msg)
     ? "income"
     : "expense";
 
@@ -289,7 +296,7 @@ async function extractTransaction(msg) {
 
 //
 // ======================================================================
-// 🎯 HANDLER
+// 🚀 HANDLER
 // ======================================================================
 //
 
