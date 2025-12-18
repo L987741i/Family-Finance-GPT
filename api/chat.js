@@ -1,36 +1,22 @@
 // /api/chat.js — Family Finance IA (WhatsApp)
 // ✅ SEM SDK (OpenAI via fetch opcional)
-// ✅ Pergunta CONTA quando faltar (lista todas) e NÃO reinicia transação
-// ✅ Estado persistido no Supabase (REST) + fallback em memória
-// ✅ Confirmação no formato solicitado
+// ✅ Fluxo com estado (pending_transaction) — não perde contexto
+// ✅ Categoria obrigatória (resolve por nome -> id quando possível)
+// ✅ Pergunta CONTA (carteira) se não estiver claro, listando todas
+// ✅ Espera resposta e depois envia confirmação completa (com conta)
 // ✅ Descrição mais específica do texto (ex: "Uber / Extra")
-// ✅ Nunca quebra por IA (fallback local)
+// ✅ Nunca quebra por erro de IA (fallback local)
+
+// ======================================================================
+// Config
+// ======================================================================
 
 const TZ = "America/Sao_Paulo";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 // ======================================================================
-// ✅ (1x) SUPABASE — crie a tabela (SQL)
+// Helpers básicos
 // ======================================================================
-//
-// create table if not exists public.ff_conversation_state (
-//   key text primary key,
-//   state jsonb not null,
-//   updated_at timestamptz not null default now()
-// );
-//
-// -- opcional: índice por updated_at
-// create index if not exists ff_conversation_state_updated_at_idx
-// on public.ff_conversation_state(updated_at);
-//
-// Env no Vercel:
-// - SUPABASE_URL
-// - SUPABASE_SERVICE_ROLE_KEY
-//
-// ======================================================================
-
-/** Fallback em memória (não é 100% confiável em serverless, mas ajuda) */
-const memoryState = globalThis.__FF_STATE__ || (globalThis.__FF_STATE__ = new Map());
 
 function ok(res, payload) {
   return res.status(200).json(payload);
@@ -44,6 +30,16 @@ function removeDiacritics(str) {
 
 function norm(s = "") {
   return removeDiacritics(String(s).toLowerCase().trim());
+}
+
+function formatDateBR(date = new Date()) {
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ }).format(date);
+}
+
+function formatAmount2(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return "0.00";
+  return n.toFixed(2);
 }
 
 function pick(obj, paths, fallback = undefined) {
@@ -63,130 +59,8 @@ function pick(obj, paths, fallback = undefined) {
   return fallback;
 }
 
-function formatDateBR(date = new Date()) {
-  return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ }).format(date);
-}
-
-function formatAmount2(amount) {
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return "0.00";
-  return n.toFixed(2);
-}
-
 // ======================================================================
-// Identificadores do usuário (para chave do estado)
-// ======================================================================
-
-function getFromPhone(body) {
-  return (
-    pick(body, ["fromPhone", "from", "wa_id"], "") ||
-    pick(body, ["entry.0.changes.0.value.messages.0.from"], "")
-  );
-}
-
-function getFamilyId(body) {
-  return (
-    pick(body, ["family_id", "familyId", "data.family_id", "context.family_id"], "") ||
-    ""
-  );
-}
-
-function buildStateKey(body) {
-  const phone = String(getFromPhone(body) || "unknown");
-  const family = String(getFamilyId(body) || "nofamily");
-  return `${family}:${phone}`;
-}
-
-// ======================================================================
-// Supabase REST (sem SDK)
-// ======================================================================
-
-function hasSupabase() {
-  return !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
-
-async function supabaseFetch(path, options = {}) {
-  const url = `${process.env.SUPABASE_URL}${path}`;
-  const headers = {
-    "Content-Type": "application/json",
-    apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-    ...options.headers
-  };
-
-  const res = await fetch(url, { ...options, headers });
-  return res;
-}
-
-async function loadState(key) {
-  // 1) memória
-  const mem = memoryState.get(key);
-  if (mem) return mem;
-
-  // 2) supabase
-  if (!hasSupabase()) return null;
-
-  try {
-    const res = await supabaseFetch(
-      `/rest/v1/ff_conversation_state?key=eq.${encodeURIComponent(key)}&select=state,updated_at`,
-      { method: "GET" }
-    );
-
-    if (!res.ok) return null;
-    const rows = await res.json();
-    const row = rows?.[0];
-    if (!row?.state) return null;
-
-    // TTL simples (24h)
-    const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : Date.now();
-    if (Date.now() - updatedAt > 24 * 60 * 60 * 1000) return null;
-
-    memoryState.set(key, row.state);
-    return row.state;
-  } catch {
-    return null;
-  }
-}
-
-async function saveState(key, state) {
-  memoryState.set(key, state);
-
-  if (!hasSupabase()) return;
-
-  try {
-    const payload = {
-      key,
-      state,
-      updated_at: new Date().toISOString()
-    };
-
-    await supabaseFetch(`/rest/v1/ff_conversation_state`, {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify(payload)
-    });
-  } catch {
-    // silêncio
-  }
-}
-
-async function clearState(key) {
-  memoryState.delete(key);
-
-  if (!hasSupabase()) return;
-
-  try {
-    await supabaseFetch(`/rest/v1/ff_conversation_state?key=eq.${encodeURIComponent(key)}`, {
-      method: "DELETE",
-      headers: { Prefer: "return=minimal" }
-    });
-  } catch {
-    // silêncio
-  }
-}
-
-// ======================================================================
-// Entrada: texto + wallets + categories
+// Entrada: texto + estado + contextos (wallets / categories)
 // ======================================================================
 
 function getInboundText(body) {
@@ -194,14 +68,34 @@ function getInboundText(body) {
     pick(body, ["messageBody", "message", "text", "input", "message_text"], "") ||
     pick(body, ["message.text.body"], "") ||
     pick(body, ["entry.0.changes.0.value.messages.0.text.body"], "");
+
   return String(direct || "").trim();
+}
+
+function getIncomingState(body) {
+  // suportar múltiplos formatos
+  return (
+    pick(body, ["conversation_state", "state", "data.conversation_state", "parsed_data.conversation_state"], null) ||
+    null
+  );
+}
+
+function getIncomingPending(body) {
+  const state = getIncomingState(body);
+
+  return (
+    pick(body, ["pending_transaction", "data.pending_transaction", "parsed_data.pending_transaction"], null) ||
+    pick(state, ["pending_transaction"], null) ||
+    null
+  );
 }
 
 function getWallets(body) {
   const walletsRaw =
     pick(body, ["context.wallets", "wallets", "data.wallets", "context.accounts", "accounts"], []) || [];
 
-  return Array.isArray(walletsRaw)
+  // normaliza {id,name}
+  const wallets = Array.isArray(walletsRaw)
     ? walletsRaw
         .map((w) => {
           if (!w) return null;
@@ -212,13 +106,15 @@ function getWallets(body) {
         })
         .filter(Boolean)
     : [];
+
+  return wallets;
 }
 
 function getCategories(body) {
   const catsRaw =
     pick(body, ["context.categories", "categories", "data.categories", "context.categorias"], []) || [];
 
-  return Array.isArray(catsRaw)
+  const cats = Array.isArray(catsRaw)
     ? catsRaw
         .map((c) => {
           if (!c) return null;
@@ -230,10 +126,12 @@ function getCategories(body) {
         })
         .filter(Boolean)
     : [];
+
+  return cats;
 }
 
 // ======================================================================
-// Números por extenso + parse valor
+// Números por extenso (PT-BR) + parse valor
 // ======================================================================
 
 const NUMBER_WORDS = {
@@ -292,9 +190,11 @@ function parseNumberFromTextPT(text) {
 
   for (const w of words) {
     if (w === "e") continue;
+
     const value = NUMBER_WORDS[w];
     if (value !== undefined) {
       found = true;
+
       if (value === 1000) {
         current = current === 0 ? 1000 : current * 1000;
         total += current;
@@ -318,8 +218,10 @@ function parseAmount(text) {
 
   if (m && m[1]) {
     let s = m[1];
+
     if (s.includes(".") && s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
     else if (s.includes(",") && !s.includes(".")) s = s.replace(",", ".");
+
     const n = Number(s);
     if (Number.isFinite(n)) return n;
   }
@@ -328,12 +230,38 @@ function parseAmount(text) {
 }
 
 // ======================================================================
-// Descrição específica
+// Descrição específica (mantém o que tiver na mensagem)
+// - Receita: "Base / Subtipo" (ex: Uber / Extra)
+// - Despesa: só Base
 // ======================================================================
 
 const STOPWORDS = new Set([
-  "por","reais","real","com","de","da","do","das","dos","no","na","nos","nas",
-  "um","uma","uns","umas","e","a","o","as","os","para","pra","pro","em"
+  "por",
+  "reais",
+  "real",
+  "com",
+  "de",
+  "da",
+  "do",
+  "das",
+  "dos",
+  "no",
+  "na",
+  "nos",
+  "nas",
+  "um",
+  "uma",
+  "uns",
+  "umas",
+  "e",
+  "a",
+  "o",
+  "as",
+  "os",
+  "para",
+  "pra",
+  "pro",
+  "em"
 ]);
 
 const VERBS_RE =
@@ -350,6 +278,7 @@ function toTitleCase(str) {
 function extractSpecificFromMessage(msg) {
   const raw = norm(msg);
 
+  // pega "de/do/da X (até 3 palavras)"
   const after = raw.match(/\b(?:de|do|da)\s+([a-z0-9-]+)(?:\s+([a-z0-9-]+))?(?:\s+([a-z0-9-]+))?/i);
   if (after) {
     const picked = [after[1], after[2], after[3]]
@@ -360,7 +289,9 @@ function extractSpecificFromMessage(msg) {
     if (picked) return toTitleCase(picked);
   }
 
+  // fallback: limpa verbos + valores
   let text = raw.replace(VERBS_RE, " ");
+
   text = text.replace(/(?:r\$\s*)?-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})/gi, " ");
   text = text.replace(/(?:r\$\s*)?-?\d+(?:[.,]\d{1,2})?/gi, " ");
 
@@ -388,12 +319,16 @@ function inferDescription(msg, categoryName, type) {
   if (base) {
     if (type === "income") {
       const subtype = String(categoryName || "").split("/")[1]?.trim() || "Extra";
+
+      // evita duplicar "Freelancer / Freelancer"
       if (norm(base).includes(norm(subtype))) return base;
+
       return `${base} / ${subtype}`;
     }
     return base;
   }
 
+  // fallback: usa filho da categoria
   if (categoryName && !String(categoryName).includes("Outros")) {
     const parts = String(categoryName).split("/").map((p) => p.trim()).filter(Boolean);
     return parts.slice(1).join(" / ") || "Lançamento";
@@ -403,19 +338,21 @@ function inferDescription(msg, categoryName, type) {
 }
 
 // ======================================================================
-// Carteiras (contas)
+// Carteiras (contas): detectar no texto / perguntar / interpretar resposta
 // ======================================================================
 
 function findWalletInText(text, wallets) {
   const t = norm(text);
   if (!wallets?.length) return null;
 
+  // match por inclusão
   let best = null;
   for (const w of wallets) {
     const wn = norm(w.name);
     if (!wn) continue;
 
     if (t === wn || t.includes(wn) || wn.includes(t)) {
+      // escolhe o mais longo (mais específico)
       if (!best || wn.length > norm(best.name).length) best = w;
     }
   }
@@ -426,24 +363,32 @@ function parseWalletSelection(userText, wallets) {
   const t = String(userText || "").trim();
   if (!wallets?.length) return null;
 
+  // 1) por número (ex: "2")
   const num = t.match(/^\s*(\d{1,2})\s*$/);
   if (num) {
     const idx = Number(num[1]) - 1;
     if (idx >= 0 && idx < wallets.length) return wallets[idx];
   }
 
+  // 2) por nome (parcial)
   return findWalletInText(t, wallets);
 }
 
 function buildWalletQuestion(wallets) {
-  if (!wallets?.length) return `Qual conta (carteira) devo usar? 👛`;
+  if (!wallets?.length) {
+    return `Qual conta (carteira) devo usar? 👛`;
+  }
+
   const lines = wallets.map((w, i) => `${i + 1}) ${w.name}`).join("\n");
   return `Qual conta (carteira) devo usar? 👛\n\n${lines}\n\nResponda com o *número* ou o *nome* da conta.`;
 }
 
 // ======================================================================
-// Categorias (heurística + IA opcional)
+// Categorias (obrigatórias): local + IA fallback + resolve id
 // ======================================================================
+
+// Se você tiver suas categorias no banco, normalmente o backend manda a lista em context.categories.
+// Aqui eu escolho por heurística e depois tento mapear para ID pelo nome.
 
 const FALLBACK_CATEGORIES = {
   expense: [
@@ -507,7 +452,11 @@ async function callOpenAI(prompt, signal) {
     signal
   });
 
-  if (!response.ok) throw new Error(`OpenAI API error (${response.status})`);
+  if (!response.ok) {
+    const txt = await response.text().catch(() => "");
+    throw new Error(`OpenAI API error (${response.status}): ${txt.slice(0, 300)}`);
+  }
+
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content;
   if (!content) throw new Error("Resposta OpenAI vazia.");
@@ -520,6 +469,7 @@ async function classifyWithAI(text, type, allowed) {
   const prompt = `
 Classifique a frase abaixo em UMA das categorias listadas.
 Responda SOMENTE com o texto EXATO da categoria.
+Não explique.
 
 Frase:
 "${text}"
@@ -528,16 +478,23 @@ Categorias:
 ${categories.map((c) => "- " + c).join("\n")}
 `.trim();
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
-    const resultRaw = await callOpenAI(prompt, controller.signal);
-    clearTimeout(timeout);
+  const maxAttempts = 2;
 
-    const result = resultRaw.replace(/^[-–•]\s*/g, "").replace(/^"+|"+$/g, "").trim();
-    if (categories.includes(result)) return result;
-  } catch {
-    // fallback
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+
+      const resultRaw = await callOpenAI(prompt, controller.signal);
+      clearTimeout(timeout);
+
+      const result = resultRaw.replace(/^[-–•]\s*/g, "").replace(/^"+|"+$/g, "").trim();
+      if (categories.includes(result)) return result;
+
+      return type === "expense" ? "Outros / Outros" : "Receita / Extra";
+    } catch (e) {
+      if (attempt === maxAttempts) return type === "expense" ? "Outros / Outros" : "Receita / Extra";
+    }
   }
 
   return type === "expense" ? "Outros / Outros" : "Receita / Extra";
@@ -545,20 +502,19 @@ ${categories.map((c) => "- " + c).join("\n")}
 
 function resolveCategoryIdByName(categoryName, categories, type) {
   if (!categoryName || !categories?.length) return null;
-
   const target = norm(categoryName);
 
-  let found = categories.find(
-    (c) => norm(c.name) === target && (!type || !c.type || norm(c.type) === norm(type))
-  );
+  // tenta bater exato
+  let found = categories.find((c) => norm(c.name) === target && (!type || !c.type || norm(c.type) === norm(type)));
   if (found) return found.id;
 
+  // tenta por inclusão (caso seu DB tenha nomes ligeiramente diferentes)
   found = categories.find((c) => target.includes(norm(c.name)) || norm(c.name).includes(target));
   return found ? found.id : null;
 }
 
 // ======================================================================
-// Confirmação (formato solicitado) — inclui conta
+// Confirmação (formato solicitado) — agora inclui CONTA
 // ======================================================================
 
 function buildConfirmationReply(data) {
@@ -578,6 +534,10 @@ ${walletLine}${date}
 Confirma o lançamento? (Sim/Não)`;
 }
 
+// ======================================================================
+// Confirmação SIM/NÃO
+// ======================================================================
+
 function isYes(text) {
   const t = norm(text);
   return t === "sim" || t === "s" || t === "ss" || t.includes("confirm") || t.includes("pode");
@@ -589,20 +549,8 @@ function isNo(text) {
 }
 
 // ======================================================================
-// Monta transação + validações
+// Extração + fluxo com estado
 // ======================================================================
-
-function missingFields(tx) {
-  const missing = [];
-  if (!tx.amount || !Number.isFinite(Number(tx.amount)) || Number(tx.amount) === 0) missing.push("amount");
-  if (!tx.wallet_id) missing.push("wallet");
-  if (!tx.category_id && tx.category_name) missing.push("category_id");
-  return missing;
-}
-
-function mergeTx(base, patch) {
-  return { ...base, ...patch, frequency: patch.frequency || base.frequency || "variable" };
-}
 
 async function buildTransactionFromMessage(message, wallets, categories) {
   const msg = String(message || "").trim();
@@ -614,8 +562,8 @@ async function buildTransactionFromMessage(message, wallets, categories) {
 
   const amount = parseAmount(msg);
 
+  // Categoria: heurística + IA fallback
   let categoryName = findBestCategoryLocal(msg, type);
-
   const allowedCategoryNames =
     categories?.length
       ? categories
@@ -623,13 +571,17 @@ async function buildTransactionFromMessage(message, wallets, categories) {
           .map((c) => c.name)
       : null;
 
-  if (categoryName === "Outros / Outros" && process.env.OPENAI_API_KEY) {
+  if (categoryName === "Outros / Outros") {
     categoryName = await classifyWithAI(msg, type, allowedCategoryNames);
   }
 
   const categoryId = resolveCategoryIdByName(categoryName, categories, type);
 
+  // Carteira: tenta achar no texto
   const wallet = findWalletInText(msg, wallets);
+
+  const wallet_id = wallet?.id || null;
+  const wallet_name = wallet?.name || null;
 
   const description = inferDescription(msg, categoryName, type);
 
@@ -639,30 +591,45 @@ async function buildTransactionFromMessage(message, wallets, categories) {
     description,
     category_name: categoryName,
     category_id: categoryId,
-    wallet_id: wallet?.id || null,
-    wallet_name: wallet?.name || null,
-    frequency: "variable",
-    awaiting: null
+    wallet_id,
+    wallet_name,
+    frequency: "variable"
+  };
+}
+
+function missingFields(tx) {
+  const missing = [];
+  if (!tx.amount || !Number.isFinite(Number(tx.amount)) || Number(tx.amount) === 0) missing.push("amount");
+  if (!tx.wallet_id) missing.push("wallet");
+  if (!tx.category_id && tx.category_name) {
+    // se seu backend exigir category_id estritamente e não deu pra mapear
+    missing.push("category_id");
+  }
+  return missing;
+}
+
+function mergeTx(base, patch) {
+  return {
+    ...base,
+    ...patch,
+    // garante campos
+    type: patch.type || base.type,
+    frequency: patch.frequency || base.frequency || "variable"
   };
 }
 
 // ======================================================================
-// Resposta (persistindo estado)
+// Resposta padrão com pending_transaction sempre devolvido
 // ======================================================================
 
-async function respond(res, key, { action, reply, tx }) {
-  // conversa/estado para seu integrador salvar como quiser
-  const conversation_state = tx ? { pending_transaction: tx } : null;
-
-  if (tx && tx.awaiting) await saveState(key, tx);
-  if (!tx || action === "confirmed" || action === "canceled") await clearState(key);
+function respond(res, { action, reply, tx }) {
+  const flat = tx ? { ...tx } : null;
 
   return ok(res, {
     action,
     reply,
-    data: tx ? { ...tx, pending_transaction: tx } : { pending_transaction: null },
-    pending_transaction: tx || null,
-    conversation_state
+    data: flat ? { ...flat, pending_transaction: flat } : { pending_transaction: tx || null },
+    pending_transaction: tx || null
   });
 }
 
@@ -673,26 +640,27 @@ async function respond(res, key, { action, reply, tx }) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const body = req.body || {};
-  const text = getInboundText(body);
-  const wallets = getWallets(body);
-  const categories = getCategories(body);
-
-  const stateKey = buildStateKey(body);
-
   try {
-    // 1) carrega estado persistido (se existir)
-    let pending = await loadState(stateKey);
+    const body = req.body || {};
+    const text = getInboundText(body);
+
+    const wallets = getWallets(body);
+    const categories = getCategories(body);
+
+    let pending = getIncomingPending(body); // pode vir do seu storage (parsed_data) ou conversation_state
+    const hasPending = pending && typeof pending === "object";
 
     // ============================================================
-    // A) Se existe pendência, continua o fluxo
+    // 1) Se estamos aguardando alguma informação do usuário
     // ============================================================
-    if (pending && typeof pending === "object" && pending.awaiting) {
+    if (hasPending && pending.awaiting) {
+      const awaiting = pending.awaiting;
+
       // aguardando CONTA
-      if (pending.awaiting === "wallet") {
+      if (awaiting === "wallet") {
         const chosen = parseWalletSelection(text, wallets);
         if (!chosen) {
-          return respond(res, stateKey, {
+          return respond(res, {
             action: "need_wallet",
             reply: `Não entendi a conta 😕\n\n${buildWalletQuestion(wallets)}`,
             tx: pending
@@ -700,19 +668,30 @@ export default async function handler(req, res) {
         }
 
         const updated = mergeTx(pending, { wallet_id: chosen.id, wallet_name: chosen.name, awaiting: null });
+
         const miss = missingFields(updated);
 
+        // se ainda falta valor
         if (miss.includes("amount")) {
           updated.awaiting = "amount";
-          return respond(res, stateKey, {
+          return respond(res, {
             action: "need_amount",
             reply: `Qual o valor de *${updated.description}*? 💰`,
             tx: updated
           });
         }
 
+        // se ainda falta category_id (quando seu DB exige)
+        if (miss.includes("category_id")) {
+          // aqui você pode optar por perguntar categoria; por enquanto mantém nome e segue.
+          // se quiser travar: descomente.
+          // updated.awaiting = "category";
+          // return respond(res, { action:"need_category", reply:"Qual categoria devo usar?", tx: updated });
+        }
+
+        // pronto -> confirmação
         updated.awaiting = "confirmation";
-        return respond(res, stateKey, {
+        return respond(res, {
           action: "awaiting_confirmation",
           reply: buildConfirmationReply(updated),
           tx: updated
@@ -720,10 +699,11 @@ export default async function handler(req, res) {
       }
 
       // aguardando VALOR
-      if (pending.awaiting === "amount") {
+      if (awaiting === "amount") {
         const amount = parseAmount(text);
+
         if (!Number.isFinite(amount) || amount === null || amount === 0) {
-          return respond(res, stateKey, {
+          return respond(res, {
             action: "need_amount",
             reply: "Não entendi o valor. Pode enviar só o número? Ex: 40 ou 40,00",
             tx: pending
@@ -731,19 +711,22 @@ export default async function handler(req, res) {
         }
 
         const updated = mergeTx(pending, { amount: Number(amount), awaiting: null });
+
         const miss = missingFields(updated);
 
+        // se falta conta
         if (miss.includes("wallet")) {
           updated.awaiting = "wallet";
-          return respond(res, stateKey, {
+          return respond(res, {
             action: "need_wallet",
             reply: buildWalletQuestion(wallets),
             tx: updated
           });
         }
 
+        // pronto -> confirmação
         updated.awaiting = "confirmation";
-        return respond(res, stateKey, {
+        return respond(res, {
           action: "awaiting_confirmation",
           reply: buildConfirmationReply(updated),
           tx: updated
@@ -751,10 +734,11 @@ export default async function handler(req, res) {
       }
 
       // aguardando CONFIRMAÇÃO
-      if (pending.awaiting === "confirmation") {
+      if (awaiting === "confirmation") {
         if (isYes(text)) {
           const finalTx = { ...pending, awaiting: null };
-          return respond(res, stateKey, {
+
+          return respond(res, {
             action: "confirmed",
             reply: "Perfeito ✅ Lançamento confirmado.",
             tx: finalTx
@@ -763,14 +747,14 @@ export default async function handler(req, res) {
 
         if (isNo(text)) {
           const canceled = { ...pending, awaiting: null };
-          return respond(res, stateKey, {
+          return respond(res, {
             action: "canceled",
             reply: "Certo ✅ Lançamento cancelado.",
             tx: canceled
           });
         }
 
-        return respond(res, stateKey, {
+        return respond(res, {
           action: "awaiting_confirmation",
           reply: "Responda *Sim* para confirmar ou *Não* para cancelar.",
           tx: pending
@@ -779,10 +763,10 @@ export default async function handler(req, res) {
     }
 
     // ============================================================
-    // B) Sem pendência: tratar mensagem nova
+    // 2) Sem pendência: interpretar mensagem nova
     // ============================================================
     if (!text) {
-      return respond(res, stateKey, {
+      return respond(res, {
         action: "need_more_info",
         reply: "Envie uma mensagem com o lançamento. Ex: “Paguei 50 no mercado”",
         tx: null
@@ -790,28 +774,32 @@ export default async function handler(req, res) {
     }
 
     const tx = await buildTransactionFromMessage(text, wallets, categories);
+
     const miss = missingFields(tx);
 
+    // 2.1 falta valor
     if (miss.includes("amount")) {
       const pendingTx = { ...tx, awaiting: "amount" };
-      return respond(res, stateKey, {
+      return respond(res, {
         action: "need_amount",
         reply: `Qual o valor de *${pendingTx.description}*? 💰`,
         tx: pendingTx
       });
     }
 
+    // 2.2 falta conta -> PERGUNTA LISTANDO TODAS
     if (miss.includes("wallet")) {
       const pendingTx = { ...tx, awaiting: "wallet" };
-      return respond(res, stateKey, {
+      return respond(res, {
         action: "need_wallet",
         reply: buildWalletQuestion(wallets),
         tx: pendingTx
       });
     }
 
+    // 2.3 pronto -> confirmação completa
     const pendingTx = { ...tx, awaiting: "confirmation" };
-    return respond(res, stateKey, {
+    return respond(res, {
       action: "awaiting_confirmation",
       reply: buildConfirmationReply(pendingTx),
       tx: pendingTx
