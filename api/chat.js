@@ -1,22 +1,55 @@
 // /api/chat.js — Family Finance IA
 // VERSÃO FINAL 2025 (SEM SDK)
-// ✔ fetch nativo
-// ✔ Regras locais + IA
+// ✔ fetch nativo (OpenAI)
+// ✔ Regras locais + IA (somente fallback)
 // ✔ Retry / Timeout
 // ✔ Categoria obrigatória
 // ✔ Descrição inteligente
+// ✔ Confirmação no formato solicitado
+// ✔ NUNCA quebra o fluxo por erro de IA (sempre fallback)
 
-//
+const TZ = "America/Sao_Paulo";
+
 // ======================================================================
-// 🔢 NÚMEROS POR EXTENSO (PT-BR)
+// Helpers
 // ======================================================================
-//
+
+function ok(res, payload) {
+  return res.status(200).json(payload);
+}
+
+function removeDiacritics(str) {
+  return String(str || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function norm(s = "") {
+  return removeDiacritics(String(s).toLowerCase().trim());
+}
+
+function formatDateBR(date = new Date()) {
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ }).format(date);
+}
+
+function formatAmount2(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return "0.00";
+  return n.toFixed(2);
+}
+
+// ======================================================================
+// 🔢 NÚMEROS POR EXTENSO (PT-BR) — simples e estável
+// ======================================================================
 
 const NUMBER_WORDS = {
   zero: 0,
-  um: 1, uma: 1,
-  dois: 2, duas: 2,
-  três: 3, tres: 3,
+  um: 1,
+  uma: 1,
+  dois: 2,
+  duas: 2,
+  tres: 3,
+  três: 3,
   quatro: 4,
   cinco: 5,
   seis: 6,
@@ -27,7 +60,8 @@ const NUMBER_WORDS = {
   onze: 11,
   doze: 12,
   treze: 13,
-  quatorze: 14, catorze: 14,
+  quatorze: 14,
+  catorze: 14,
   quinze: 15,
   dezesseis: 16,
   dezessete: 17,
@@ -55,15 +89,20 @@ const NUMBER_WORDS = {
 };
 
 function parseNumberFromTextPT(text) {
-  const words = text.toLowerCase().split(/\s+/);
+  const t = norm(text).replace(/[^\p{L}\p{N}\s-]/gu, " ");
+  const words = t.split(/\s+/).filter(Boolean);
+
   let total = 0;
   let current = 0;
   let found = false;
 
   for (const w of words) {
-    if (NUMBER_WORDS[w] !== undefined) {
+    if (w === "e") continue;
+
+    const value = NUMBER_WORDS[w];
+    if (value !== undefined) {
       found = true;
-      const value = NUMBER_WORDS[w];
+
       if (value === 1000) {
         current = current === 0 ? 1000 : current * 1000;
         total += current;
@@ -78,11 +117,36 @@ function parseNumberFromTextPT(text) {
   return found ? total : null;
 }
 
-//
+// Tenta capturar números digitados (inclui 1.234,56) e fallback por extenso
+function parseAmount(text) {
+  const raw = String(text || "");
+
+  // Captura: 100 | 100,5 | 100.50 | 1.234,56 | 1234,56
+  const m = raw.match(
+    /(?:R\$\s*)?(-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|-?\d+(?:[.,]\d{1,2})?)/i
+  );
+
+  if (m && m[1]) {
+    let s = m[1];
+
+    if (s.includes(".") && s.includes(",")) {
+      // 1.234,56 -> 1234.56
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else if (s.includes(",") && !s.includes(".")) {
+      // 1234,56 -> 1234.56
+      s = s.replace(",", ".");
+    }
+
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+  }
+
+  return parseNumberFromTextPT(raw);
+}
+
 // ======================================================================
 // 🧠 CATEGORIAS (FONTE DA VERDADE)
 // ======================================================================
-//
 
 const ALL_CATEGORIES = {
   expense: [
@@ -127,47 +191,59 @@ const ALL_CATEGORIES = {
   ]
 };
 
-//
 // ======================================================================
 // 🧩 CLASSIFICAÇÃO LOCAL (RÁPIDA)
 // ======================================================================
-//
 
 function findBestCategoryLocal(text, type) {
-  const t = text.toLowerCase();
+  const t = norm(text);
 
   if (type === "income") {
-    if (/sal[aá]rio|pagamento/.test(t)) return "Receita / Salário";
-    if (/freelancer/.test(t)) return "Receita / Freelancer";
-    if (/venda/.test(t)) return "Receita / Venda";
+    if (/salario|pagamento/.test(t)) return "Receita / Salário";
+    if (/freelancer|freela|job/.test(t)) return "Receita / Freelancer";
+    if (/venda|vendi/.test(t)) return "Receita / Venda";
+    if (/beneficio|benefícios|beneficios|vale/.test(t)) return "Receita / Benefícios";
     return "Receita / Extra";
   }
 
   if (/aluguel/.test(t)) return "Moradia / Aluguel";
   if (/iptu/.test(t)) return "Moradia / IPTU";
   if (/luz|energia/.test(t)) return "Contas Mensais / Energia";
-  if (/água/.test(t)) return "Contas Mensais / Água";
-  if (/gás/.test(t)) return "Contas Mensais / Gás";
-  if (/internet/.test(t)) return "Contas Mensais / Internet";
+  if (/agua/.test(t)) return "Contas Mensais / Água";
+  if (/gas/.test(t)) return "Contas Mensais / Gás";
+  if (/internet|wifi/.test(t)) return "Contas Mensais / Internet";
   if (/uber|99/.test(t)) return "Transporte / Uber / 99";
-  if (/faca|garfo|panela|prato|copo/.test(t))
+  if (/estacionamento/.test(t)) return "Transporte / Estacionamento";
+  if (/mercado|supermercado/.test(t)) return "Alimentação / Supermercado";
+  if (/delivery|ifood|ifood/.test(t)) return "Alimentação / Delivery";
+  if (/padaria/.test(t)) return "Alimentação / Padaria";
+  if (/acougue|açougue|peixaria/.test(t)) return "Alimentação / Açougue / Peixaria";
+  if (/hortifruti/.test(t)) return "Alimentação / Hortifruti";
+  if (/restaurante|lanche|lanches|pizza|hamburguer|hambúrguer/.test(t))
+    return "Alimentação / Restaurante / Lanches fora";
+  if (/combustivel|combustível|gasolina|etanol|diesel/.test(t)) return "Transporte / Combustível";
+  if (/onibus|ônibus|trem|metro|metrô/.test(t)) return "Transporte / Ônibus / Trem / Metrô";
+  if (/faca|garfo|panela|prato|copo|talher|utensilio|utensílio/.test(t))
     return "Mercado & Casa / Utensílios domésticos";
+  if (/detergente|sabao|sabão|amaciante|alvejante|limpeza/.test(t))
+    return "Mercado & Casa / Produtos de limpeza";
 
   return "Outros / Outros";
 }
 
-//
 // ======================================================================
-// 🤖 CHAMADA OPENAI (FETCH NATIVO)
+// 🤖 OPENAI (FETCH NATIVO) — com timeout
 // ======================================================================
-//
 
 async function callOpenAI(prompt, signal) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY não configurada.");
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify({
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
@@ -178,14 +254,18 @@ async function callOpenAI(prompt, signal) {
   });
 
   if (!response.ok) {
-    throw new Error("OpenAI API error");
+    const txt = await response.text().catch(() => "");
+    throw new Error(`OpenAI API error (${response.status}): ${txt.slice(0, 300)}`);
   }
 
   const data = await response.json();
-  return data.choices[0].message.content.trim();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Resposta OpenAI vazia.");
+  return String(content).trim();
 }
 
 async function classifyWithAI(text, type) {
+  // IA é SOMENTE fallback. Se falhar, não quebra nada.
   const categories = ALL_CATEGORIES[type];
 
   const prompt = `
@@ -207,12 +287,18 @@ ${categories.map(c => "- " + c).join("\n")}
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12000);
 
-      const result = await callOpenAI(prompt, controller.signal);
+      const resultRaw = await callOpenAI(prompt, controller.signal);
 
       clearTimeout(timeout);
 
+      const result = resultRaw
+        .replace(/^[-–•]\s*/g, "")
+        .replace(/^"+|"+$/g, "")
+        .trim();
+
       if (categories.includes(result)) return result;
 
+      // Se a IA respondeu fora da lista, não inventa: fallback padrão.
       return type === "expense" ? "Outros / Outros" : "Receita / Extra";
     } catch (err) {
       if (attempt === maxAttempts) {
@@ -225,60 +311,75 @@ ${categories.map(c => "- " + c).join("\n")}
   return type === "expense" ? "Outros / Outros" : "Receita / Extra";
 }
 
-//
 // ======================================================================
 // 📝 DESCRIÇÃO INTELIGENTE
 // ======================================================================
-//
 
 function inferDescription(msg, category) {
-  if (category && !category.includes("Outros")) {
-    return category.split("/")[1].trim();
+  const cat = String(category || "");
+
+  // Se a categoria é boa, a descrição vira a parte "filha" (tudo após o primeiro "/")
+  if (cat && !cat.includes("Outros")) {
+    const parts = cat.split("/").map(p => p.trim()).filter(Boolean);
+    const child = parts.slice(1).join(" / ");
+    return child || "Lançamento";
   }
 
-  let text = msg
-    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou)/gi, "")
-    .replace(/\d+[.,]?\d*/g, "");
+  // Senão, tenta "limpar" o texto
+  let text = String(msg || "");
 
+  // remove verbos comuns
+  text = text.replace(/\b(paguei|gastei|comprei|recebi|ganhei|entrou|pagar|gastar|comprar)\b/gi, " ");
+
+  // remove valores digitados
+  text = text.replace(/(?:R\$\s*)?-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})/gi, " ");
+  text = text.replace(/(?:R\$\s*)?-?\d+(?:[.,]\d{1,2})?/gi, " ");
+
+  // remove números por extenso
   Object.keys(NUMBER_WORDS).forEach(w => {
-    text = text.replace(new RegExp(`\\b${w}\\b`, "gi"), "");
+    const ww = removeDiacritics(w);
+    text = text.replace(new RegExp(`\\b${ww}\\b`, "gi"), " ");
+    text = text.replace(new RegExp(`\\b${w}\\b`, "gi"), " ");
   });
 
-  text = text.replace(/\b(por|reais|real|com|de|uma|um|uns|umas)\b/gi, "");
-  text = text.replace(/\s+/g, " ").trim();
+  // remove “lixo”
+  text = text
+    .replace(/\b(por|reais|real|com|de|da|do|das|dos|uma|um|uns|umas|no|na|nos|nas|e)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : "Lançamento";
 }
 
-//
 // ======================================================================
-// 📦 EXTRAÇÃO
+// 📦 EXTRAÇÃO (NUNCA quebra por erro de IA)
 // ======================================================================
-//
 
-async function extractTransaction(msg) {
-  const type = /(recebi|ganhei|sal[aá]rio|venda|freelancer)/i.test(msg)
+async function extractTransaction(rawMsg) {
+  const msg = String(rawMsg || "").trim();
+  const t = norm(msg);
+
+  const type = /(recebi|ganhei|salario|venda|vendi|freelancer|freela|entrou)/i.test(t)
     ? "income"
     : "expense";
 
-  const numeric = msg.match(/(\d+[.,]?\d*)/);
-  const amount = numeric
-    ? Number(numeric[1].replace(",", "."))
-    : parseNumberFromTextPT(msg);
+  const amount = parseAmount(msg);
 
   let category = findBestCategoryLocal(msg, type);
 
+  // IA somente quando local não resolveu (Outros)
   if (category === "Outros / Outros") {
     category = await classifyWithAI(msg, type);
   }
 
   const description = inferDescription(msg, category);
 
-  if (!amount) {
+  // Se não achou valor (ou veio 0), pede valor
+  if (!Number.isFinite(amount) || amount === null || amount === 0) {
     return {
       needsMoreInfo: true,
       reply: `Qual o valor de *${description}*? 💰`,
-      partial: { type, description, category_name: category }
+      partial: { type, description, category_name: category, frequency: "variable" }
     };
   }
 
@@ -286,7 +387,7 @@ async function extractTransaction(msg) {
     needsMoreInfo: false,
     data: {
       type,
-      amount,
+      amount: Number(amount),
       description,
       category_name: category,
       frequency: "variable"
@@ -294,11 +395,28 @@ async function extractTransaction(msg) {
   };
 }
 
-//
+// ======================================================================
+// 🧾 CONFIRMAÇÃO — FORMATO SOLICITADO
+// ======================================================================
+
+function buildConfirmationReply(data) {
+  const isIncome = data.type === "income";
+  const emoji = isIncome ? "🟢" : "🔴";
+  const label = isIncome ? "Receita" : "Despesa";
+  const date = formatDateBR(new Date());
+
+  return `${emoji} ${label}  |  Variável
+💰 Valor: R$ ${formatAmount2(data.amount)}
+📝 Descrição: ${data.description}
+📁 Categoria: ${data.category_name}
+${date}
+
+Confirma o lançamento? (Sim/Não)`;
+}
+
 // ======================================================================
 // 🚀 HANDLER
 // ======================================================================
-//
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -306,37 +424,38 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { message } = req.body;
-    const msg = message.toLowerCase().trim();
+    const rawMessage = String(req.body?.message || "").trim();
 
-    const parsed = await extractTransaction(msg);
+    if (!rawMessage) {
+      return ok(res, {
+        action: "need_more_info",
+        reply: "Envie uma mensagem com o lançamento. Ex: “Paguei 50 no mercado”",
+        data: null
+      });
+    }
+
+    const parsed = await extractTransaction(rawMessage);
 
     if (parsed.needsMoreInfo) {
-      return res.status(200).json({
+      return ok(res, {
         reply: parsed.reply,
         action: "need_more_info",
         data: parsed.partial
       });
     }
 
-    return res.status(200).json({
-      const isIncome = parsed.data.type === "income";
-const emoji = isIncome ? "🟢" : "🔴";
-const label = isIncome ? "Receita" : "Despesa";
+    return ok(res, {
+      reply: buildConfirmationReply(parsed.data),
+      action: "awaiting_confirmation",
+      data: parsed.data
+    });
+  } catch (err) {
+    console.error(err);
 
-const date = new Intl.DateTimeFormat("pt-BR", {
-  timeZone: "America/Sao_Paulo"
-}).format(new Date());
-
-return res.status(200).json({
-  reply: `${emoji} ${label}  |  Variável
-💰 Valor: R$ ${parsed.data.amount.toFixed(2)}
-📝 Descrição: ${parsed.data.description}
-📁 Categoria: ${parsed.data.category_name}
-${date}
-
-Confirma o lançamento? (Sim/Não)`,
-  action: "awaiting_confirmation",
-  data: parsed.data
-});
-
+    // Nunca explode o WhatsApp por erro interno
+    return ok(res, {
+      reply: "Serviço temporariamente indisponível 😕",
+      action: "error"
+    });
+  }
+}
