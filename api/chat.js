@@ -1,34 +1,106 @@
 // /api/chat.js — Family Finance IA
-// Ajustado para manter contexto e solicitar dados faltantes
+// Ajuste: Contexto Prioritário + Categorização Inteligente
 
 // ======================================================================
-// 🎭 PERSONALIDADE & FORMATADORES
+// 🗂️ CATEGORIAS E PALAVRAS-CHAVE ("IA" LÓGICA)
+// ======================================================================
+
+const ALL_CATEGORIES = {
+  expense: [
+    "Moradia / Aluguel", "Moradia / Financiamento / Prestação", "Moradia / Condomínio", "Moradia / IPTU", "Moradia / Reformas e manutenção", "Moradia / Limpeza da casa", "Moradia / Mobília e decoração", "Moradia / Serviços domésticos",
+    "Alimentação / Supermercado", "Alimentação / Açougue / Peixaria", "Alimentação / Hortifruti", "Alimentação / Padaria", "Alimentação / Delivery", "Alimentação / Restaurante / Lanches fora", "Alimentação / Água (galão / filtro)",
+    "Transporte / Combustível", "Transporte / Ônibus / Trem / Metrô", "Transporte / Uber / 99", "Transporte / Estacionamento", "Transporte / Manutenção do veículo", "Transporte / Seguro do carro/moto", "Transporte / Documentação (IPVA / licenciamento)",
+    "Contas Mensais / Energia", "Contas Mensais / Água", "Contas Mensais / Gás", "Contas Mensais / Internet", "Contas Mensais / Telefone", "Contas Mensais / Streaming", "Contas Mensais / Plano de celular",
+    "Saúde / Plano de saúde", "Saúde / Consulta médica", "Saúde / Psicólogo / Terapia", "Saúde / Exames", "Saúde / Farmácia", "Saúde / Dentista", "Saúde / Ótica",
+    "Educação / Mensalidade escolar", "Educação / Material escolar", "Educação / Cursos", "Educação / Livros", "Educação / Transporte escolar", "Educação / Faculdade",
+    "Lazer / Cinema / Teatro", "Lazer / Viagens", "Lazer / Piquenique / Passeios", "Lazer / Assinaturas de jogos", "Lazer / Academia / Esportes",
+    "Mercado & Casa / Produtos de higiene", "Mercado & Casa / Produtos de limpeza", "Mercado & Casa / Descartáveis", "Mercado & Casa / Utensílios domésticos", "Mercado & Casa / Pequenos reparos",
+    "Compras Pessoais / Roupas", "Compras Pessoais / Calçados", "Compras Pessoais / Acessórios", "Compras Pessoais / Cosméticos", "Compras Pessoais / Celular / Eletrônicos", "Compras Pessoais / Presentes",
+    "Família & Filhos / Fraldas", "Família & Filhos / Roupa infantil", "Família & Filhos / Brinquedos", "Família & Filhos / Mesada", "Família & Filhos / Saúde infantil", "Família & Filhos / Atividades infantis", "Família & Filhos / Babá / Cuidador",
+    "Trabalho & Negócios / Ferramentas", "Trabalho & Negócios / Equipamentos", "Trabalho & Negócios / Uniforme", "Trabalho & Negócios / Cursos profissionais", "Trabalho & Negócios / Materiais de trabalho",
+    "Impostos e Documentos / IPVA", "Impostos e Documentos / IRPF", "Impostos e Documentos / Taxas diversas", "Impostos e Documentos / Documentos pessoais",
+    "Banco & Tarifas / Tarifas bancárias", "Banco & Tarifas / Anuidade cartão", "Banco & Tarifas / Juros de cartão", "Banco & Tarifas / Multas",
+    "Investimentos / Aportes", "Investimentos / Tesouro Direto", "Investimentos / Renda fixa", "Investimentos / Fundos", "Investimentos / Cripto", "Investimentos / Ações",
+    "Doações & Igreja / Dízimo", "Doações & Igreja / Oferta", "Doações & Igreja / Missões", "Doações & Igreja / Ajudas sociais",
+    "Animais de Estimação / Ração", "Animais de Estimação / Petshop", "Animais de Estimação / Veterinário", "Animais de Estimação / Medicamentos",
+    "Emergências / Saúde", "Emergências / Casa", "Emergências / Carro",
+    "Outros / Outros"
+  ],
+  income: [
+    "Receita / Salário", "Receita / Extra", "Receita / Freelancer", "Receita / Venda", "Receita / Empréstimo", "Receita / Juros", "Receita / Benefícios", "Receita / Lanche Escolar"
+  ]
+};
+
+// Mapa de palavras-chave para categorias
+const KEYWORD_MAP = {
+  // Moradia
+  "aluguel": "Moradia / Aluguel", "condominio": "Moradia / Condomínio", "iptu": "Moradia / IPTU", "faxina": "Moradia / Limpeza da casa", "reforma": "Moradia / Reformas e manutenção",
+  // Alimentação
+  "mercado": "Alimentação / Supermercado", "compras": "Alimentação / Supermercado", "assai": "Alimentação / Supermercado", "carrefour": "Alimentação / Supermercado", 
+  "padaria": "Alimentação / Padaria", "pão": "Alimentação / Padaria", 
+  "ifood": "Alimentação / Delivery", "pizza": "Alimentação / Delivery", "hamburguer": "Alimentação / Delivery",
+  "restaurante": "Alimentação / Restaurante / Lanches fora", "almoço": "Alimentação / Restaurante / Lanches fora", "jantar": "Alimentação / Restaurante / Lanches fora", "mc": "Alimentação / Restaurante / Lanches fora",
+  "açougue": "Alimentação / Açougue / Peixaria", "carne": "Alimentação / Açougue / Peixaria",
+  // Transporte
+  "gasolina": "Transporte / Combustível", "posto": "Transporte / Combustível", "etanol": "Transporte / Combustível", "abastecer": "Transporte / Combustível",
+  "uber": "Transporte / Uber / 99", "99": "Transporte / Uber / 99", "taxi": "Transporte / Uber / 99", "corrida": "Transporte / Uber / 99",
+  "onibus": "Transporte / Ônibus / Trem / Metrô", "metro": "Transporte / Ônibus / Trem / Metrô", "passagem": "Transporte / Ônibus / Trem / Metrô",
+  "ipva": "Transporte / Documentação (IPVA / licenciamento)", "licenciamento": "Transporte / Documentação (IPVA / licenciamento)",
+  // Contas
+  "luz": "Contas Mensais / Energia", "energia": "Contas Mensais / Energia", "enel": "Contas Mensais / Energia", "light": "Contas Mensais / Energia",
+  "agua": "Contas Mensais / Água", "sabesp": "Contas Mensais / Água", "cedae": "Contas Mensais / Água",
+  "internet": "Contas Mensais / Internet", "wifi": "Contas Mensais / Internet", "vivo": "Contas Mensais / Internet", "claro": "Contas Mensais / Internet",
+  "netflix": "Contas Mensais / Streaming", "spotify": "Contas Mensais / Streaming", "youtube": "Contas Mensais / Streaming", "amazon": "Contas Mensais / Streaming",
+  // Saúde
+  "farmacia": "Saúde / Farmácia", "remedio": "Saúde / Farmácia", "drogaria": "Saúde / Farmácia",
+  "medico": "Saúde / Consulta médica", "consulta": "Saúde / Consulta médica",
+  // Lazer
+  "cinema": "Lazer / Cinema / Teatro", "viagem": "Lazer / Viagens", "ferias": "Lazer / Viagens", "hotel": "Lazer / Viagens",
+  "academia": "Lazer / Academia / Esportes", "smartfit": "Lazer / Academia / Esportes",
+  // Pets
+  "ração": "Animais de Estimação / Ração", "pet": "Animais de Estimação / Petshop", "veterinario": "Animais de Estimação / Veterinário",
+  // Receita
+  "salario": "Receita / Salário", "pagamento": "Receita / Salário",
+  "pix": "Receita / Extra", "venda": "Receita / Venda"
+};
+
+function smartCategorize(description, type) {
+  if (!description) return type === 'income' ? "Receita / Extra" : "Outros / Outros";
+  
+  const text = description.toLowerCase();
+  
+  // 1. Tenta achar palavra chave
+  for (const [key, category] of Object.entries(KEYWORD_MAP)) {
+    if (text.includes(key)) {
+      // Verifica se a categoria faz sentido com o tipo (income/expense)
+      const isIncomeCat = category.startsWith("Receita");
+      if ((type === 'income' && isIncomeCat) || (type === 'expense' && !isIncomeCat)) {
+        return category;
+      }
+    }
+  }
+
+  // 2. Fallback
+  return type === 'income' ? "Receita / Extra" : "Outros / Outros";
+}
+
+// ======================================================================
+// 🧠 PARSERS E FORMATADORES
 // ======================================================================
 
 const formatCurrency = (val) => {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 };
 
-const formatText = (text) => {
-  if (!text) return '';
-  return text.charAt(0).toUpperCase() + text.slice(1);
-};
-
-// ======================================================================
-// 🧠 PARSERS (NÚMEROS E TEXTO)
-// ======================================================================
-
 const NUMBER_WORDS = {
   zero: 0, um: 1, uma: 1, dois: 2, duas: 2, três: 3, tres: 3, quatro: 4,
   cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10,
   vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, cem: 100, mil: 1000
-  // ... adicione mais se necessário
 };
 
 function parseNumberFromTextPT(text) {
   const words = text.toLowerCase().split(/\s+/);
   let total = 0, current = 0, found = false;
-  // Lógica simplificada de parser
   for (const w of words) {
     if (NUMBER_WORDS[w] !== undefined) {
       found = true;
@@ -40,69 +112,28 @@ function parseNumberFromTextPT(text) {
   return found ? total + current : null;
 }
 
-function inferDescription(msg) {
-  let t = msg
-    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi|na|no|com|de|para)/gi, "")
-    .replace(/\d+[.,]?\d*/g, "") // Remove números
-    .replace(/\b(reais|real)\b/gi, "")
-    .trim();
-  
-  return t ? t.charAt(0).toUpperCase() + t.slice(1) : "Lançamento Geral";
-}
-
-// ======================================================================
-// 💳 DETECÇÃO DE CONTA E CATEGORIA
-// ======================================================================
-
 function detectWallet(msg, wallets = []) {
   const t = msg.toLowerCase();
-  // Procura pelo nome exato ou parcial da carteira na mensagem
+  // Busca exata ou parcial, retorna o OBJETO da carteira
   return wallets.find(w => t.includes(w.name.toLowerCase())) || null;
 }
 
-function askForWallet(wallets) {
-  // Lista dinâmica conforme solicitado
-  const walletList = wallets.map(w => `• [${w.name}]`).join("\n");
+function cleanDescription(originalMsg, walletName, amountStr) {
+  let t = originalMsg.toLowerCase();
   
-  return `De qual conta saiu ou entrou? 💳\n\n${walletList}`;
-}
-
-function detectCategoryLocal(msg, categories = []) {
-  const t = msg.toLowerCase();
-  for (const c of categories) {
-    if (t.includes(c.name.toLowerCase())) return c.name;
+  // Remove termos de comando comuns
+  t = t.replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|saiu|transferi|na|no|com|de|para)/gi, "");
+  
+  // Remove o nome da carteira se estiver na frase (ex: "almoço carteira lucas")
+  if (walletName) {
+    t = t.replace(new RegExp(walletName.toLowerCase(), "g"), "");
   }
-  return null;
-}
-
-// ======================================================================
-// ✏️ EDIÇÃO DE CONTEXTO
-// ======================================================================
-
-function handleEdit(msg, pending, wallets, categories) {
-  const t = msg.toLowerCase();
-  let updated = false;
-
-  // Detecta alteração de VALOR
-  if (/valor|r\$|reais/.test(t)) {
-    const v = parseNumberFromTextPT(t) || Number(t.match(/(\d+[.,]?\d*)/)?.[1]?.replace(",", "."));
-    if (v) { pending.amount = v; updated = true; }
-  }
-
-  // Detecta alteração de DESCRIÇÃO
-  if (/descrição|descricao|nome/.test(t)) {
-    // Remove a palavra comando e pega o resto
-    const newDesc = t.replace(/.*(descrição|descricao|nome)( é| ser)?/i, "").trim();
-    if(newDesc) { pending.description = inferDescription(newDesc); updated = true; }
-  }
-
-  // Detecta alteração de CONTA
-  if (/conta|carteira|banco/.test(t)) {
-    const w = detectWallet(t, wallets);
-    if (w) { pending.wallet = w; updated = true; }
-  }
-
-  return { pending, updated };
+  
+  // Remove números e moeda
+  t = t.replace(/\d+[.,]?\d*/g, "").replace(/\b(reais|real|r\$)\b/gi, "");
+  
+  t = t.trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : "Lançamento Geral";
 }
 
 // ======================================================================
@@ -111,93 +142,116 @@ function handleEdit(msg, pending, wallets, categories) {
 
 export default async function handler(req, res) {
   const { message, context } = req.body;
-  const msg = message.toLowerCase().trim();
+  const msg = message.trim(); // Mantém Case original para descrição, lower só para lógica
 
-  // Recupera dados do Contexto (Payload vindo do webhook)
   const wallets = context?.wallets || [];
-  // Se você tiver cards separados e quiser buscar neles também, concatene aqui:
-  const allAccounts = [...wallets, ...(context?.cards || [])]; 
-  const categories = context?.categories || [];
+  const cards = context?.cards || []; // Suporte a cards se vier no payload
+  const allAccounts = [...wallets, ...cards];
   
-  // Verifica se JÁ existe uma transação pendente aguardando info ou confirmação
   let pending = context?.pending_transaction || null;
 
-  // 1. CENÁRIO: USUÁRIO RESPONDENDO A PERGUNTA DA CONTA
-  // Se temos dados pendentes mas falta a carteira, e o usuário mandou uma msg
-  if (pending && !pending.wallet) {
+  // ===============================================================
+  // 1️⃣ PRIORIDADE: CHECAR SE É RESPOSTA DE CONTEXTO (PENDÊNCIA)
+  // ===============================================================
+  
+  if (pending && pending.wallet === null) {
+    // Estamos esperando a conta. O usuário respondeu algo.
     const foundWallet = detectWallet(msg, allAccounts);
     
     if (foundWallet) {
-      // JUNTAR A INFORMAÇÃO (Merge)
+      // ✅ Usuário respondeu a conta corretamente.
       pending.wallet = foundWallet;
       
-      // Agora está completo, pede confirmação
+      // Se a descrição ainda não foi categorizada ou era genérica, tenta melhorar agora
+      if (!pending.category || pending.category === "Outros / Outros") {
+        pending.category = smartCategorize(pending.description, pending.type);
+      }
+
       return res.json({
         reply: buildConfirmationMessage(pending),
         action: "awaiting_confirmation",
-        data: { pending_transaction: pending } // Atualiza o contexto
+        data: { pending_transaction: pending }
       });
-    } else {
-      // Usuário respondeu algo que não é conta, insiste na pergunta
-      return res.json({
-        reply: `Não entendi qual conta usar. 😅\n\n${askForWallet(allAccounts)}`,
+    } 
+    // Se não achou conta, mas o usuário digitou algo, pode ser que ele esteja tentando 
+    // cancelar ou começar do zero. Se parece comando novo, o código segue.
+    // Se não parece comando novo, insistimos na conta.
+    const isNewCommand = /(gastei|recebi|paguei|compra|venda)/i.test(msg);
+    if (!isNewCommand) {
+       return res.json({
+        reply: `Não encontrei essa conta. 😅\n\nDe qual conta saiu ou entrou? 💳\n${allAccounts.map(w => `• [${w.name}]`).join("\n")}`,
         action: "need_wallet",
-        data: { pending_transaction: pending } // Mantém o que já tinha
+        data: { pending_transaction: pending }
       });
     }
   }
 
-  // 2. CENÁRIO: EDIÇÃO (O usuário quer corrigir algo antes de confirmar)
-  // Ex: "O valor é 200" ou "Muda a conta para Nubank"
-  if (pending && /(muda|altera|valor|conta|descrição|é na verdade)/i.test(msg)) {
-    const { pending: updatedPending, updated } = handleEdit(msg, pending, allAccounts, categories);
-    
-    if (updated) {
-      return res.json({
-        reply: `Entendido! Fiz o ajuste. 😉\n\n${buildConfirmationMessage(updatedPending)}`,
-        action: "awaiting_confirmation",
-        data: { pending_transaction: updatedPending }
-      });
-    }
+  // ===============================================================
+  // 2️⃣ EDIÇÃO E CONFIRMAÇÃO (SIM/NÃO)
+  // ===============================================================
+
+  if (pending && /(sim|confirma|ok|pode ser)/i.test(msg)) {
+     // Aqui você acionaria o salvamento real no banco (webhook externo cuidará disso)
+     // Por enquanto retornamos ação 'save'
+     return res.json({
+       reply: "Lançamento salvo com sucesso! ✅",
+       action: "save_transaction",
+       data: pending
+     });
   }
 
-  // 3. CENÁRIO: NOVA TRANSAÇÃO (Início da conversa ou novo comando)
-  // Se chegou aqui, não é continuação de fluxo (ou o fluxo anterior foi finalizado)
+  if (pending && /(não|cancelar|esquece)/i.test(msg)) {
+    return res.json({
+      reply: "Cancelado. 🗑️",
+      action: "cancel_transaction",
+      data: null // Limpa pendencia
+    });
+  }
 
-  const type = /(recebi|ganhei|sal[aá]rio|venda|entrada|deposito)/i.test(msg) ? "income" : "expense";
+  // ===============================================================
+  // 3️⃣ NOVA TRANSAÇÃO (EXTRACT)
+  // ===============================================================
+
+  // Se chegou aqui, é uma nova intenção (ou substituição da anterior)
+  const msgLower = msg.toLowerCase();
+  const type = /(recebi|ganhei|sal[aá]rio|venda|entrada|deposito)/i.test(msgLower) ? "income" : "expense";
   
   // Extração de Valor
-  const numericMatch = msg.match(/(\d+[.,]?\d*)/);
+  const numericMatch = msgLower.match(/(\d+[.,]?\d*)/);
   const amount = numericMatch 
     ? Number(numericMatch[1].replace(",", ".")) 
-    : parseNumberFromTextPT(msg);
+    : parseNumberFromTextPT(msgLower);
 
-  // Se não achou valor, pode ser apenas um papo aleatório (implementar IA de conversa aqui se quiser)
-  if (!amount && !pending) {
-     return res.json({ reply: "Olá! Posso te ajudar a registrar gastos ou ganhos. Diga algo como 'Gastei 50 reais na padaria'. 🚀" });
+  // Se não tem valor e não tem contexto, é conversa fiada
+  if (!amount) {
+     return res.json({ reply: "Olá! 👋 Diga algo como 'Gastei 20 reais no Uber' ou 'Recebi 100 reais'." });
   }
 
-  const description = inferDescription(msg);
-  const wallet = detectWallet(msg, allAccounts);
-  const category = detectCategoryLocal(msg, categories);
+  // Tenta achar conta na frase inicial
+  const wallet = detectWallet(msgLower, allAccounts);
+  
+  // Limpa a descrição (tira valor, tira nome da conta se houver)
+  const description = cleanDescription(msg, wallet?.name, numericMatch?.[0]);
+  
+  // Tenta categorizar automaticamente
+  const category = smartCategorize(description, type);
 
   const newTransaction = {
     type,
     amount,
     description,
     category,
-    wallet: wallet || null, // Se não achou, fica null
-    frequency: "Variável" // Default conforme pedido
+    wallet: wallet || null,
+    frequency: "Variável" // Default
   };
 
-  // 4. VERIFICAÇÃO FINAL: FALTOU ALGO?
+  // 4️⃣ VERIFICAÇÃO FINAL: FALTOU ALGO?
 
-  // Faltou Conta?
   if (!newTransaction.wallet) {
     return res.json({
-      reply: askForWallet(allAccounts),
-      action: "need_wallet", // Sinaliza para o frontend/backend que estamos esperando isso
-      data: { pending_transaction: newTransaction } // Salva o estado parcial
+      reply: `De qual conta saiu ou entrou? 💳\n\n${allAccounts.map(w => `• [${w.name}]`).join("\n")}`,
+      action: "need_wallet",
+      data: { pending_transaction: newTransaction }
     });
   }
 
@@ -210,20 +264,18 @@ export default async function handler(req, res) {
 }
 
 // ======================================================================
-// 📟 MENSAGEM DE CONFIRMAÇÃO PADRÃO
+// 📟 FORMATADOR DE MENSAGEM FINAL
 // ======================================================================
 
 function buildConfirmationMessage(t) {
   const icon = t.type === 'income' ? '🟢' : '🔴';
+  const typeName = t.type === 'income' ? 'Entrada' : 'Saída';
   
-  return `Confirma o lançamento?
+  return `${icon} *${typeName}* |  📅 *${t.frequency}*
+💰 *Valor*: ${formatCurrency(t.amount)}
+📝 *Descrição*: ${t.description}
+💳 *Conta*: ${t.wallet?.name || '---'}
+📂 *Categoria*: ${t.category}
 
-${icon} **${t.type === 'income' ? 'Entrada' : 'Saída'}**
-💰 Valor: ${formatCurrency(t.amount)}
-📝 Descrição: ${formatText(t.description)}
-💳 Conta: ${t.wallet?.name || 'Não informada'}
-📂 Categoria: ${formatText(t.category || 'Geral')}
-📅 Frequência: ${t.frequency}
-
-Responda **Sim** para salvar ou digite o que quer alterar (ex: "valor é 100").`;
+Responda *Sim* para salvar ou *Não* para cancelar.`;
 }
