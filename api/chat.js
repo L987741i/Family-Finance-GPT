@@ -1,9 +1,10 @@
-// /api/chat.js — IA Financeira + Family Finance
-// VERSÃO FINAL 2025
-// ✔ Classificação com IA
+// /api/chat.js — Family Finance IA
+// VERSÃO FINAL RESILIENTE 2025
+// ✔ Regras locais + IA
+// ✔ Retry / Timeout
+// ✔ Fallback seguro
 // ✔ Categoria obrigatória
 // ✔ Descrição inteligente
-// ✔ WhatsApp / Lovable Ready
 
 import OpenAI from "openai";
 
@@ -106,102 +107,19 @@ const ALL_CATEGORIES = {
     "Alimentação / Padaria",
     "Alimentação / Delivery",
     "Alimentação / Restaurante / Lanches fora",
-    "Alimentação / Água (galão / filtro)",
 
     "Transporte / Combustível",
     "Transporte / Ônibus / Trem / Metrô",
     "Transporte / Uber / 99",
     "Transporte / Estacionamento",
-    "Transporte / Manutenção do veículo",
-    "Transporte / Seguro do carro/moto",
-    "Transporte / Documentação (IPVA / licenciamento)",
 
     "Contas Mensais / Energia",
     "Contas Mensais / Água",
-    "Contas Mensais / Gás",
     "Contas Mensais / Internet",
-    "Contas Mensais / Telefone",
-    "Contas Mensais / Streaming",
-    "Contas Mensais / Plano de celular",
+    "Contas Mensais / Gás",
 
-    "Saúde / Plano de saúde",
-    "Saúde / Consulta médica",
-    "Saúde / Psicólogo / Terapia",
-    "Saúde / Exames",
-    "Saúde / Farmácia",
-    "Saúde / Dentista",
-    "Saúde / Ótica",
-
-    "Educação / Mensalidade escolar",
-    "Educação / Material escolar",
-    "Educação / Cursos",
-    "Educação / Livros",
-    "Educação / Transporte escolar",
-    "Educação / Faculdade",
-
-    "Lazer / Cinema / Teatro",
-    "Lazer / Viagens",
-    "Lazer / Piquenique / Passeios",
-    "Lazer / Assinaturas de jogos",
-    "Lazer / Academia / Esportes",
-
-    "Mercado & Casa / Produtos de higiene",
-    "Mercado & Casa / Produtos de limpeza",
-    "Mercado & Casa / Descartáveis",
     "Mercado & Casa / Utensílios domésticos",
-    "Mercado & Casa / Pequenos reparos",
-
-    "Compras Pessoais / Roupas",
-    "Compras Pessoais / Calçados",
-    "Compras Pessoais / Acessórios",
-    "Compras Pessoais / Cosméticos",
-    "Compras Pessoais / Celular / Eletrônicos",
-    "Compras Pessoais / Presentes",
-
-    "Família & Filhos / Fraldas",
-    "Família & Filhos / Roupa infantil",
-    "Família & Filhos / Brinquedos",
-    "Família & Filhos / Mesada",
-    "Família & Filhos / Saúde infantil",
-    "Família & Filhos / Atividades infantis",
-    "Família & Filhos / Babá / Cuidador",
-
-    "Trabalho & Negócios / Ferramentas",
-    "Trabalho & Negócios / Equipamentos",
-    "Trabalho & Negócios / Uniforme",
-    "Trabalho & Negócios / Cursos profissionais",
-    "Trabalho & Negócios / Materiais de trabalho",
-
-    "Impostos e Documentos / IPVA",
-    "Impostos e Documentos / IRPF",
-    "Impostos e Documentos / Taxas diversas",
-    "Impostos e Documentos / Documentos pessoais",
-
-    "Banco & Tarifas / Tarifas bancárias",
-    "Banco & Tarifas / Anuidade cartão",
-    "Banco & Tarifas / Juros de cartão",
-    "Banco & Tarifas / Multas",
-
-    "Investimentos / Aportes",
-    "Investimentos / Tesouro Direto",
-    "Investimentos / Renda fixa",
-    "Investimentos / Fundos",
-    "Investimentos / Cripto",
-    "Investimentos / Ações",
-
-    "Doações & Igreja / Dízimo",
-    "Doações & Igreja / Oferta",
-    "Doações & Igreja / Missões",
-    "Doações & Igreja / Ajudas sociais",
-
-    "Animais de Estimação / Ração",
-    "Animais de Estimação / Petshop",
-    "Animais de Estimação / Veterinário",
-    "Animais de Estimação / Medicamentos",
-
-    "Emergências / Saúde",
-    "Emergências / Casa",
-    "Emergências / Carro",
+    "Mercado & Casa / Produtos de limpeza",
 
     "Outros / Outros"
   ],
@@ -211,47 +129,93 @@ const ALL_CATEGORIES = {
     "Receita / Extra",
     "Receita / Freelancer",
     "Receita / Venda",
-    "Receita / Empréstimo",
-    "Receita / Juros",
-    "Receita / Benefícios",
-    "Receita / Lanche Escolar"
+    "Receita / Benefícios"
   ]
 };
 
 //
 // ======================================================================
-// 🤖 CLASSIFICADOR COM IA
+// 🧩 CLASSIFICAÇÃO LOCAL (BARATA E RÁPIDA)
+// ======================================================================
+//
+
+function findBestCategoryLocal(text, type) {
+  const t = text.toLowerCase();
+
+  if (type === "income") {
+    if (/sal[aá]rio|pagamento/.test(t)) return "Receita / Salário";
+    if (/freelancer/.test(t)) return "Receita / Freelancer";
+    if (/venda/.test(t)) return "Receita / Venda";
+    return "Receita / Extra";
+  }
+
+  if (/aluguel/.test(t)) return "Moradia / Aluguel";
+  if (/iptu/.test(t)) return "Moradia / IPTU";
+  if (/luz|energia/.test(t)) return "Contas Mensais / Energia";
+  if (/água/.test(t)) return "Contas Mensais / Água";
+  if (/gás/.test(t)) return "Contas Mensais / Gás";
+  if (/internet/.test(t)) return "Contas Mensais / Internet";
+  if (/uber|99/.test(t)) return "Transporte / Uber / 99";
+  if (/faca|garfo|panela|prato|copo/.test(t))
+    return "Mercado & Casa / Utensílios domésticos";
+
+  return "Outros / Outros";
+}
+
+//
+// ======================================================================
+// 🤖 CLASSIFICAÇÃO COM IA (RESILIENTE)
 // ======================================================================
 //
 
 async function classifyWithAI(text, type) {
   const categories = ALL_CATEGORIES[type];
+  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
   const prompt = `
 Classifique a frase abaixo em UMA das categorias listadas.
 Responda SOMENTE com o texto EXATO da categoria.
-Não explique. Não crie categorias.
+Não explique.
 
 Frase:
 "${text}"
 
 Categorias:
 ${categories.map(c => "- " + c).join("\n")}
-`;
+`.trim();
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
-    temperature: 0,
-    messages: [{ role: "user", content: prompt }]
-  });
+  const maxAttempts = 3;
 
-  const result = response.choices[0].message.content.trim();
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
 
-  return categories.includes(result)
-    ? result
-    : type === "expense"
-      ? "Outros / Outros"
-      : "Receita / Extra";
+      const response = await openai.chat.completions.create(
+        {
+          model,
+          temperature: 0,
+          messages: [{ role: "user", content: prompt }]
+        },
+        { signal: controller.signal }
+      );
+
+      clearTimeout(timeout);
+
+      const result = response.choices?.[0]?.message?.content?.trim();
+
+      if (categories.includes(result)) return result;
+
+      return type === "expense" ? "Outros / Outros" : "Receita / Extra";
+    } catch (err) {
+      if (attempt === maxAttempts) {
+        return type === "expense" ? "Outros / Outros" : "Receita / Extra";
+      }
+      await new Promise(r => setTimeout(r, 400 * attempt));
+    }
+  }
+
+  return type === "expense" ? "Outros / Outros" : "Receita / Extra";
 }
 
 //
@@ -266,7 +230,7 @@ function inferDescription(msg, category) {
   }
 
   let text = msg
-    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi)/gi, "")
+    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou)/gi, "")
     .replace(/\d+[.,]?\d*/g, "");
 
   Object.keys(NUMBER_WORDS).forEach(w => {
@@ -281,7 +245,7 @@ function inferDescription(msg, category) {
 
 //
 // ======================================================================
-// 📦 EXTRAÇÃO DE TRANSAÇÃO
+// 📦 EXTRAÇÃO
 // ======================================================================
 //
 
@@ -290,17 +254,15 @@ async function extractTransaction(msg) {
     ? "income"
     : "expense";
 
-  const numericMatch = msg.match(/(\d+[.,]?\d*)/);
-  let amount = numericMatch
-    ? Number(numericMatch[1].replace(",", "."))
+  const numeric = msg.match(/(\d+[.,]?\d*)/);
+  const amount = numeric
+    ? Number(numeric[1].replace(",", "."))
     : parseNumberFromTextPT(msg);
 
-  let category = "Outros / Outros";
+  let category = findBestCategoryLocal(msg, type);
 
-  if (type === "income") {
-    category = await classifyWithAI(msg, "income");
-  } else {
-    category = await classifyWithAI(msg, "expense");
+  if (category === "Outros / Outros") {
+    category = await classifyWithAI(msg, type);
   }
 
   const description = inferDescription(msg, category);
@@ -308,7 +270,6 @@ async function extractTransaction(msg) {
   if (!amount) {
     return {
       needsMoreInfo: true,
-      missingField: "amount",
       reply: `Qual o valor de *${description}*? 💰`,
       partial: { type, description, category_name: category }
     };
@@ -316,7 +277,7 @@ async function extractTransaction(msg) {
 
   return {
     needsMoreInfo: false,
-    fullData: {
+    data: {
       type,
       amount,
       description,
@@ -328,19 +289,7 @@ async function extractTransaction(msg) {
 
 //
 // ======================================================================
-// 🎯 INTENÇÃO
-// ======================================================================
-//
-
-function detectIntent(msg) {
-  if (/^(sim|ok|confirmo)$/i.test(msg)) return "confirm";
-  if (/^(não|nao|cancelar)$/i.test(msg)) return "cancel";
-  return "transaction";
-}
-
-//
-// ======================================================================
-// 🚀 HANDLER PRINCIPAL
+// 🎯 HANDLER
 // ======================================================================
 //
 
@@ -350,26 +299,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { message, context } = req.body;
+    const { message } = req.body;
     const msg = message.toLowerCase().trim();
-    const pending = context?.pending_transaction || null;
-
-    if (pending) {
-      const intent = detectIntent(msg);
-      if (intent === "confirm") {
-        return res.status(200).json({
-          reply: "Registrado com sucesso ✅",
-          action: "success",
-          data: pending
-        });
-      }
-      if (intent === "cancel") {
-        return res.status(200).json({
-          reply: "Transação cancelada ❌",
-          action: "cancelled"
-        });
-      }
-    }
 
     const parsed = await extractTransaction(msg);
 
@@ -382,20 +313,20 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({
-      reply: `🔴 ${parsed.fullData.type === "income" ? "Receita" : "Despesa"} | 📅 Variável
-💰 Valor: R$ ${parsed.fullData.amount.toFixed(2)}
-📝 Descrição: ${parsed.fullData.description}
-📁 Categoria: ${parsed.fullData.category_name}
+      reply: `🔴 ${parsed.data.type === "income" ? "Receita" : "Despesa"}
+💰 Valor: R$ ${parsed.data.amount.toFixed(2)}
+📝 Descrição: ${parsed.data.description}
+📁 Categoria: ${parsed.data.category_name}
 
 Confirma o lançamento? (Sim/Não)`,
       action: "awaiting_confirmation",
-      data: parsed.fullData
+      data: parsed.data
     });
 
   } catch (err) {
     console.error(err);
     return res.status(500).json({
-      reply: "Erro interno 😕",
+      reply: "Serviço temporariamente indisponível 😕",
       action: "error"
     });
   }
