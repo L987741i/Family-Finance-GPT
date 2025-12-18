@@ -1,7 +1,7 @@
 // /api/chat.js — Family Finance IA
-// VERSÃO FINAL DEFINITIVA 2025
-// ✔ Estado consistente
-// ✔ Nunca esquece pending_transaction
+// VERSÃO FINAL 2025
+// ✔ Alinhado ao backend (success / cancelled)
+// ✔ Estado consistente (pending_transaction)
 // ✔ Conta obrigatória
 // ✔ Categoria inteligente
 // ✔ WhatsApp-safe
@@ -29,6 +29,7 @@ const NUMBER_WORDS = {
 function parseNumberFromTextPT(text) {
   const words = text.toLowerCase().split(/\s+/);
   let total = 0, current = 0, found = false;
+
   for (const w of words) {
     if (NUMBER_WORDS[w] !== undefined) {
       found = true;
@@ -44,7 +45,7 @@ function parseNumberFromTextPT(text) {
 }
 
 // ======================================================================
-// 🧠 CATEGORIAS + KEYWORDS
+// 🧠 CATEGORIAS INTELIGENTES
 // ======================================================================
 
 const KEYWORD_MAP = {
@@ -104,7 +105,9 @@ function cleanDescription(msg) {
 
 function detectWallet(msg, wallets) {
   const t = msg.toLowerCase();
-  return wallets.find(w => t === w.name.toLowerCase() || t.includes(w.name.toLowerCase())) || null;
+  return wallets.find(w =>
+    t === w.name.toLowerCase() || t.includes(w.name.toLowerCase())
+  ) || null;
 }
 
 function askForWallet(wallets) {
@@ -118,7 +121,10 @@ ${wallets.map(w => `• [${w.name}]`).join("\n")}`;
 // ======================================================================
 
 function formatConfirmation(t) {
-  return `🔴 *Despesa* | 📅 *Variável*
+  const icon = t.type === "income" ? "🟢" : "🔴";
+  const label = t.type === "income" ? "Entrada" : "Saída";
+
+  return `${icon} *${label}* | 📅 *Variável*
 💰 *Valor*: R$ ${t.amount.toFixed(2)}
 📝 *Descrição*: ${t.description}
 📂 *Categoria*: ${t.category}
@@ -128,7 +134,7 @@ Responda *Sim* para salvar ou *Não* para cancelar.`;
 }
 
 // ======================================================================
-// 🚀 HANDLER PRINCIPAL (STATE MACHINE)
+// 🚀 HANDLER PRINCIPAL (STATEFUL)
 // ======================================================================
 
 export default async function handler(req, res) {
@@ -146,42 +152,40 @@ export default async function handler(req, res) {
 
     if (w) {
       pending.wallet = w;
-
       if (!pending.category || pending.category === "Outros / Outros") {
         pending.category = smartCategorize(pending.description, pending.type);
       }
 
-      return res.json({
+      return res.status(200).json({
         reply: formatConfirmation(pending),
-        action: "awaiting_confirmation",
+        action: "message",
         data: { pending_transaction: pending }
       });
     }
 
-    return res.json({
+    return res.status(200).json({
       reply: askForWallet(wallets),
-      action: "need_wallet",
+      action: "message",
       data: { pending_transaction: pending }
     });
   }
 
   // ====================================================================
-  // 2️⃣ CONFIRMAÇÃO / CANCELAMENTO
+  // 2️⃣ CONFIRMAÇÃO / CANCELAMENTO (ALINHADO AO BACKEND)
   // ====================================================================
 
   if (pending && /^(sim|ok|confirmar?)$/i.test(msg)) {
-    return res.json({
-      reply: "Lançamento salvo com sucesso! ✅",
-      action: "save_transaction",
+    return res.status(200).json({
+      reply: "Registrado! 🚀",
+      action: "success",
       data: pending
     });
   }
 
   if (pending && /^(não|nao|cancelar?)$/i.test(msg)) {
-    return res.json({
-      reply: "Lançamento cancelado ❌",
-      action: "cancel_transaction",
-      data: null
+    return res.status(200).json({
+      reply: "Cancelado 👍",
+      action: "cancelled"
     });
   }
 
@@ -198,8 +202,9 @@ export default async function handler(req, res) {
     : parseNumberFromTextPT(lower);
 
   if (!amount) {
-    return res.json({
-      reply: "Olá! 👋 Diga algo como *'Gastei 20 reais no Uber'* ou *'Recebi 100 reais'*."
+    return res.status(200).json({
+      reply: "Olá! 👋 Diga algo como *'Gastei 20 reais no Uber'* ou *'Recebi 100 reais'*. ",
+      action: "message"
     });
   }
 
@@ -217,16 +222,16 @@ export default async function handler(req, res) {
   };
 
   if (!wallet) {
-    return res.json({
+    return res.status(200).json({
       reply: askForWallet(wallets),
-      action: "need_wallet",
+      action: "message",
       data: { pending_transaction: transaction }
     });
   }
 
-  return res.json({
+  return res.status(200).json({
     reply: formatConfirmation(transaction),
-    action: "awaiting_confirmation",
+    action: "message",
     data: { pending_transaction: transaction }
   });
 }
