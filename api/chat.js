@@ -1,14 +1,16 @@
 // /api/chat.js — Family Finance IA
-// VERSÃO FINAL 2025
-// ✔ Alinhado ao backend (success / cancelled)
-// ✔ Estado consistente (pending_transaction)
-// ✔ Conta obrigatória
-// ✔ Categoria inteligente
-// ✔ WhatsApp-safe
+// VERSÃO FINAL OFICIAL 2025
+// ✔ Payload alinhado
+// ✔ Lançamentos + Consultas
+// ✔ Conta e Categoria obrigatórias
+// ✔ IA resiliente (sem SDK)
+// ✔ Fluxo por estado
 
+//
 // ======================================================================
 // 🔢 NÚMEROS POR EXTENSO (PT-BR)
 // ======================================================================
+//
 
 const NUMBER_WORDS = {
   zero: 0, um: 1, uma: 1, dois: 2, duas: 2,
@@ -29,7 +31,6 @@ const NUMBER_WORDS = {
 function parseNumberFromTextPT(text) {
   const words = text.toLowerCase().split(/\s+/);
   let total = 0, current = 0, found = false;
-
   for (const w of words) {
     if (NUMBER_WORDS[w] !== undefined) {
       found = true;
@@ -44,194 +45,218 @@ function parseNumberFromTextPT(text) {
   return found ? total + current : null;
 }
 
-// ======================================================================
-// 🧠 CATEGORIAS INTELIGENTES
-// ======================================================================
-
-const KEYWORD_MAP = {
-  // Transporte
-  "uber": "Transporte / Uber / 99",
-  "99": "Transporte / Uber / 99",
-  "taxi": "Transporte / Uber / 99",
-  "gasolina": "Transporte / Combustível",
-  "onibus": "Transporte / Ônibus / Trem / Metrô",
-  "metro": "Transporte / Ônibus / Trem / Metrô",
-
-  // Alimentação
-  "mercado": "Alimentação / Supermercado",
-  "ifood": "Alimentação / Delivery",
-  "restaurante": "Alimentação / Restaurante / Lanches fora",
-  "padaria": "Alimentação / Padaria",
-
-  // Contas
-  "luz": "Contas Mensais / Energia",
-  "energia": "Contas Mensais / Energia",
-  "agua": "Contas Mensais / Água",
-  "internet": "Contas Mensais / Internet",
-
-  // Receita
-  "salario": "Receita / Salário",
-  "pagamento": "Receita / Salário"
-};
-
-function smartCategorize(description, type) {
-  if (!description) return type === "income" ? "Receita / Extra" : "Outros / Outros";
-  const t = description.toLowerCase();
-  for (const [key, cat] of Object.entries(KEYWORD_MAP)) {
-    if (t.includes(key)) return cat;
-  }
-  return type === "income" ? "Receita / Extra" : "Outros / Outros";
-}
-
+//
 // ======================================================================
 // 📝 DESCRIÇÃO
 // ======================================================================
+//
 
-function cleanDescription(msg) {
-  let t = msg.toLowerCase();
-  t = t.replace(/(gastei|paguei|comprei|recebi|ganhei|no|na|em|com|de|para)/gi, "");
-  t = t.replace(/\d+[.,]?\d*/g, "");
+function inferDescription(msg) {
+  let t = msg
+    .replace(/(paguei|gastei|comprei|recebi|ganhei|entrou|transferi)/gi, "")
+    .replace(/\d+[.,]?\d*/g, "");
+
   Object.keys(NUMBER_WORDS).forEach(w => {
     t = t.replace(new RegExp(`\\b${w}\\b`, "gi"), "");
   });
-  t = t.replace(/\b(reais|real|r\$)\b/gi, "");
+
+  t = t.replace(/\b(por|reais|real|com|de|uma|um|uns|umas)\b/gi, "");
   t = t.replace(/\s+/g, " ").trim();
+
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : "Lançamento";
 }
 
+//
 // ======================================================================
-// 💳 CONTAS
+// 💳 CONTAS (CARTEIRAS)
 // ======================================================================
+//
 
-function detectWallet(msg, wallets) {
+function detectWallet(msg, wallets = []) {
   const t = msg.toLowerCase();
-  return wallets.find(w =>
-    t === w.name.toLowerCase() || t.includes(w.name.toLowerCase())
-  ) || null;
+  return wallets.find(w => t.includes(w.name.toLowerCase())) || null;
 }
 
 function askForWallet(wallets) {
   return `De qual conta saiu ou entrou? 💳
 
-${wallets.map(w => `• [${w.name}]`).join("\n")}`;
+${wallets.map(w => `• ${w.name}`).join("\n")}`;
 }
 
+//
 // ======================================================================
-// 📟 CONFIRMAÇÃO
+// 🧠 CATEGORIAS (LOCAL SIMPLES)
 // ======================================================================
+//
 
-function formatConfirmation(t) {
-  const icon = t.type === "income" ? "🟢" : "🔴";
-  const label = t.type === "income" ? "Entrada" : "Saída";
-
-  return `${icon} *${label}* | 📅 *Variável*
-💰 *Valor*: R$ ${t.amount.toFixed(2)}
-📝 *Descrição*: ${t.description}
-📂 *Categoria*: ${t.category}
-💳 *Conta*: ${t.wallet.name}
-
-Responda *Sim* para salvar ou *Não* para cancelar.`;
+function detectCategoryLocal(msg, categories = []) {
+  const t = msg.toLowerCase();
+  for (const c of categories) {
+    if (t.includes(c.name.toLowerCase())) return c.name;
+  }
+  return null;
 }
 
+//
 // ======================================================================
-// 🚀 HANDLER PRINCIPAL (STATEFUL)
+// 🔍 DETECÇÃO DE CONSULTAS
 // ======================================================================
+//
+
+function detectQueryIntent(msg) {
+  const t = msg.toLowerCase();
+
+  if (/últim|recent|lançamentos|transações/i.test(t)) {
+    return "query_last_transactions";
+  }
+
+  if (/contas a pagar|boletos|vencendo|faturas/i.test(t)) {
+    return "query_bills_to_pay";
+  }
+
+  return null;
+}
+
+//
+// ======================================================================
+// ✏️ EDIÇÃO PÓS-CONFIRMAÇÃO
+// ======================================================================
+//
+
+function handleEdit(msg, pending, wallets, categories) {
+  const t = msg.toLowerCase();
+
+  if (/valor/.test(t)) {
+    const v = parseNumberFromTextPT(t) ||
+      Number(t.match(/(\d+[.,]?\d*)/)?.[1]?.replace(",", "."));
+    if (v) pending.amount = v;
+  }
+
+  if (/descrição|descricao/.test(t)) {
+    pending.description = inferDescription(t);
+  }
+
+  if (/conta|carteira/.test(t)) {
+    const w = detectWallet(t, wallets);
+    if (w) pending.wallet = w;
+  }
+
+  if (/categoria/.test(t)) {
+    const c = detectCategoryLocal(t, categories);
+    if (c) pending.category = c;
+  }
+
+  return pending;
+}
+
+//
+// ======================================================================
+// 📦 EXTRAÇÃO DE LANÇAMENTO
+// ======================================================================
+//
+
+function extractTransaction(msg, context) {
+  const wallets = context.wallets || [];
+  const categories = context.categories || [];
+
+  const type = /(recebi|ganhei|sal[aá]rio|venda)/i.test(msg)
+    ? "income"
+    : "expense";
+
+  const numeric = msg.match(/(\d+[.,]?\d*)/);
+  const amount = numeric
+    ? Number(numeric[1].replace(",", "."))
+    : parseNumberFromTextPT(msg);
+
+  const description = inferDescription(msg);
+  const wallet = detectWallet(msg, wallets);
+  const category = detectCategoryLocal(msg, categories);
+
+  if (!wallet) {
+    return {
+      need_wallet: true,
+      reply: askForWallet(wallets),
+      partial: {
+        type,
+        amount,
+        description,
+        category,
+        frequency: "variable"
+      }
+    };
+  }
+
+  return {
+    data: {
+      type,
+      amount,
+      description,
+      category,
+      wallet,
+      frequency: "variable"
+    }
+  };
+}
+
+//
+// ======================================================================
+// 🚀 HANDLER PRINCIPAL
+// ======================================================================
+//
 
 export default async function handler(req, res) {
-  const { message, context } = req.body;
-  const msg = message.trim();
+  const { message, history, context } = req.body;
+  const msg = message.toLowerCase().trim();
+
   const wallets = context?.wallets || [];
+  const categories = context?.categories || [];
   let pending = context?.pending_transaction || null;
 
-  // ====================================================================
-  // 1️⃣ BLOQUEIO TOTAL: SE EXISTE PENDÊNCIA SEM CONTA
-  // ====================================================================
+  // 🔍 CONSULTAS
+  const queryIntent = detectQueryIntent(msg);
 
-  if (pending && !pending.wallet) {
-    const w = detectWallet(msg, wallets);
-
-    if (w) {
-      pending.wallet = w;
-      if (!pending.category || pending.category === "Outros / Outros") {
-        pending.category = smartCategorize(pending.description, pending.type);
+  if (queryIntent) {
+    return res.json({
+      reply: "Certo 👍 Já vou verificar isso pra você.",
+      action: queryIntent,
+      data: {
+        family_id: context.family_id,
+        member_id: context.member_id
       }
-
-      return res.status(200).json({
-        reply: formatConfirmation(pending),
-        action: "message",
-        data: { pending_transaction: pending }
-      });
-    }
-
-    return res.status(200).json({
-      reply: askForWallet(wallets),
-      action: "message",
-      data: { pending_transaction: pending }
     });
   }
 
-  // ====================================================================
-  // 2️⃣ CONFIRMAÇÃO / CANCELAMENTO (ALINHADO AO BACKEND)
-  // ====================================================================
-
-  if (pending && /^(sim|ok|confirmar?)$/i.test(msg)) {
-    return res.status(200).json({
-      reply: "Registrado! 🚀",
-      action: "success",
+  // ✏️ EDIÇÃO
+  if (pending && /(valor|conta|carteira|descrição|descricao|categoria)/i.test(msg)) {
+    pending = handleEdit(msg, pending, wallets, categories);
+    return res.json({
+      reply: "Atualizei o lançamento 👌\nConfirma agora? (Sim/Não)",
+      action: "awaiting_confirmation",
       data: pending
     });
   }
 
-  if (pending && /^(não|nao|cancelar?)$/i.test(msg)) {
-    return res.status(200).json({
-      reply: "Cancelado 👍",
-      action: "cancelled"
+  // 🧾 NOVO LANÇAMENTO
+  const parsed = extractTransaction(msg, context);
+
+  if (parsed.need_wallet) {
+    return res.json({
+      reply: parsed.reply,
+      action: "need_wallet",
+      data: parsed.partial
     });
   }
 
-  // ====================================================================
-  // 3️⃣ NOVA TRANSAÇÃO
-  // ====================================================================
+  return res.json({
+    reply: `🔴 ${parsed.data.type === "income" ? "Receita" : "Despesa"}
+💰 Valor: R$ ${parsed.data.amount?.toFixed(2) || "—"}
+📝 Descrição: ${parsed.data.description}
+📁 Categoria: ${parsed.data.category || "—"}
+💳 Conta: ${parsed.data.wallet.name}
+📅 Frequência: Variável
 
-  const lower = msg.toLowerCase();
-  const type = /(recebi|ganhei|sal[aá]rio)/i.test(lower) ? "income" : "expense";
-
-  const numeric = lower.match(/(\d+[.,]?\d*)/);
-  const amount = numeric
-    ? Number(numeric[1].replace(",", "."))
-    : parseNumberFromTextPT(lower);
-
-  if (!amount) {
-    return res.status(200).json({
-      reply: "Olá! 👋 Diga algo como *'Gastei 20 reais no Uber'* ou *'Recebi 100 reais'*. ",
-      action: "message"
-    });
-  }
-
-  const wallet = detectWallet(lower, wallets);
-  const description = cleanDescription(msg);
-  const category = smartCategorize(description, type);
-
-  const transaction = {
-    type,
-    amount,
-    description,
-    category,
-    wallet: wallet || null,
-    frequency: "Variável"
-  };
-
-  if (!wallet) {
-    return res.status(200).json({
-      reply: askForWallet(wallets),
-      action: "message",
-      data: { pending_transaction: transaction }
-    });
-  }
-
-  return res.status(200).json({
-    reply: formatConfirmation(transaction),
-    action: "message",
-    data: { pending_transaction: transaction }
+Confirma o lançamento? (Sim/Não)`,
+    action: "awaiting_confirmation",
+    data: parsed.data
   });
 }
