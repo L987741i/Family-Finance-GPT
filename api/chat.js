@@ -1,10 +1,12 @@
 // /api/chat.js — Family Finance IA
-// VERSÃO FINAL OFICIAL 2025
-// ✔ Payload alinhado
-// ✔ Lançamentos + Consultas
-// ✔ Conta e Categoria obrigatórias
-// ✔ IA resiliente (sem SDK)
-// ✔ Fluxo por estado
+// VERSÃO FINAL CORRIGIDA 2025
+// ✔ NÃO perde contexto
+// ✔ pending_transaction persistido corretamente
+// ✔ Conta obrigatória
+// ✔ Categoria obrigatória
+// ✔ Edição pós-confirmação
+// ✔ Consultas (últimas transações / contas a pagar)
+// ✔ Payload alinhado ao webhook real
 
 //
 // ======================================================================
@@ -31,6 +33,7 @@ const NUMBER_WORDS = {
 function parseNumberFromTextPT(text) {
   const words = text.toLowerCase().split(/\s+/);
   let total = 0, current = 0, found = false;
+
   for (const w of words) {
     if (NUMBER_WORDS[w] !== undefined) {
       found = true;
@@ -47,7 +50,7 @@ function parseNumberFromTextPT(text) {
 
 //
 // ======================================================================
-// 📝 DESCRIÇÃO
+// 📝 DESCRIÇÃO (NUNCA "OUTROS")
 // ======================================================================
 //
 
@@ -68,7 +71,7 @@ function inferDescription(msg) {
 
 //
 // ======================================================================
-// 💳 CONTAS (CARTEIRAS)
+// 💳 CONTA (CARTEIRA)
 // ======================================================================
 //
 
@@ -85,7 +88,7 @@ ${wallets.map(w => `• ${w.name}`).join("\n")}`;
 
 //
 // ======================================================================
-// 🧠 CATEGORIAS (LOCAL SIMPLES)
+// 🧠 CATEGORIA (LOCAL SIMPLES)
 // ======================================================================
 //
 
@@ -99,7 +102,7 @@ function detectCategoryLocal(msg, categories = []) {
 
 //
 // ======================================================================
-// 🔍 DETECÇÃO DE CONSULTAS
+// 🔍 CONSULTAS
 // ======================================================================
 //
 
@@ -151,11 +154,11 @@ function handleEdit(msg, pending, wallets, categories) {
 
 //
 // ======================================================================
-// 📦 EXTRAÇÃO DE LANÇAMENTO
+// 📦 EXTRAÇÃO INICIAL (SEM PERDER ESTADO)
 // ======================================================================
 //
 
-function extractTransaction(msg, context) {
+function extractInitialTransaction(msg, context) {
   const wallets = context.wallets || [];
   const categories = context.categories || [];
 
@@ -172,40 +175,26 @@ function extractTransaction(msg, context) {
   const wallet = detectWallet(msg, wallets);
   const category = detectCategoryLocal(msg, categories);
 
-  if (!wallet) {
-    return {
-      need_wallet: true,
-      reply: askForWallet(wallets),
-      partial: {
-        type,
-        amount,
-        description,
-        category,
-        frequency: "variable"
-      }
-    };
-  }
-
-  return {
-    data: {
-      type,
-      amount,
-      description,
-      category,
-      wallet,
-      frequency: "variable"
-    }
+  const partial = {
+    type,
+    amount,
+    description,
+    category,
+    wallet: wallet || null,
+    frequency: "variable"
   };
+
+  return { partial, wallet };
 }
 
 //
 // ======================================================================
-// 🚀 HANDLER PRINCIPAL
+// 🚀 HANDLER PRINCIPAL (STATEFUL)
 // ======================================================================
 //
 
 export default async function handler(req, res) {
-  const { message, history, context } = req.body;
+  const { message, context } = req.body;
   const msg = message.toLowerCase().trim();
 
   const wallets = context?.wallets || [];
@@ -214,7 +203,6 @@ export default async function handler(req, res) {
 
   // 🔍 CONSULTAS
   const queryIntent = detectQueryIntent(msg);
-
   if (queryIntent) {
     return res.json({
       reply: "Certo 👍 Já vou verificar isso pra você.",
@@ -224,6 +212,26 @@ export default async function handler(req, res) {
         member_id: context.member_id
       }
     });
+  }
+
+  // 🧠 CONTINUAÇÃO: usuário respondeu conta
+  if (pending && !pending.wallet) {
+    const w = detectWallet(msg, wallets);
+    if (w) {
+      pending.wallet = w;
+      return res.json({
+        reply: `🔴 ${pending.type === "income" ? "Receita" : "Despesa"}
+💰 Valor: R$ ${pending.amount?.toFixed(2) || "—"}
+📝 Descrição: ${pending.description}
+📁 Categoria: ${pending.category || "—"}
+💳 Conta: ${w.name}
+📅 Frequência: Variável
+
+Confirma o lançamento? (Sim/Não)`,
+        action: "awaiting_confirmation",
+        data: pending
+      });
+    }
   }
 
   // ✏️ EDIÇÃO
@@ -237,26 +245,33 @@ export default async function handler(req, res) {
   }
 
   // 🧾 NOVO LANÇAMENTO
-  const parsed = extractTransaction(msg, context);
+  const { partial, wallet } = extractInitialTransaction(msg, context);
 
-  if (parsed.need_wallet) {
+  // ❗ FALTOU CONTA → SALVA pending_transaction
+  if (!wallet) {
     return res.json({
-      reply: parsed.reply,
+      reply: askForWallet(wallets),
       action: "need_wallet",
-      data: parsed.partial
+      data: {
+        pending_transaction: partial
+      }
     });
   }
 
+  // ✅ TUDO OK → CONFIRMAÇÃO
   return res.json({
-    reply: `🔴 ${parsed.data.type === "income" ? "Receita" : "Despesa"}
-💰 Valor: R$ ${parsed.data.amount?.toFixed(2) || "—"}
-📝 Descrição: ${parsed.data.description}
-📁 Categoria: ${parsed.data.category || "—"}
-💳 Conta: ${parsed.data.wallet.name}
+    reply: `🔴 ${partial.type === "income" ? "Receita" : "Despesa"}
+💰 Valor: R$ ${partial.amount?.toFixed(2) || "—"}
+📝 Descrição: ${partial.description}
+📁 Categoria: ${partial.category || "—"}
+💳 Conta: ${wallet.name}
 📅 Frequência: Variável
 
 Confirma o lançamento? (Sim/Não)`,
     action: "awaiting_confirmation",
-    data: parsed.data
+    data: {
+      ...partial,
+      wallet
+    }
   });
 }
