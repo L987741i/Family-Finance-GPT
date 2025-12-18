@@ -249,7 +249,7 @@ export default async function handler(req, res) {
     if (/(sim|ok|confirma|pode ser|isso)/i.test(msg)) {
       return res.json({
         reply: "Salvo com sucesso! ✅",
-        action: "save_transaction", // Frontend deve processar isso
+        action: "success", // Frontend deve processar isso
         data: pending
       });
     }
@@ -257,7 +257,7 @@ export default async function handler(req, res) {
     if (/(não|nao|cancelar|esquece)/i.test(msg)) {
       return res.json({
         reply: "Cancelado. 🗑️",
-        action: "cancel_transaction",
+        action: "cancelled",
         data: null
       });
     }
