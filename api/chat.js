@@ -1,9 +1,21 @@
-// /Funcionando com alguns problemas, MESa chama resumo, não pergunta conta, não altera
-
-const TZ = "America/Sao_Paulo";
+// /api/chat.js — Family Finance IA (WhatsApp)
+// ✅ SEM SDK (OpenAI via fetch opcional)
+// ✅ Fluxo com estado (pending_transaction) — não perde contexto
+// ✅ Categoria obrigatória (resolve por nome -> id quando possível)
+// ✅ Pergunta CONTA (carteira) se não estiver claro, listando todas
+// ✅ Espera resposta e depois envia confirmação completa (com conta)
+// ✅ Descrição mais específica do texto (ex: "Uber / Extra")
+// ✅ Nunca quebra por erro de IA (fallback local)
 
 // ======================================================================
-// Helpers
+// Config
+// ======================================================================
+
+const TZ = "America/Sao_Paulo";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
+// ======================================================================
+// Helpers básicos
 // ======================================================================
 
 function ok(res, payload) {
@@ -30,8 +42,96 @@ function formatAmount2(amount) {
   return n.toFixed(2);
 }
 
+function pick(obj, paths, fallback = undefined) {
+  for (const p of paths) {
+    const parts = p.split(".");
+    let cur = obj;
+    let ok = true;
+    for (const part of parts) {
+      if (cur && Object.prototype.hasOwnProperty.call(cur, part)) cur = cur[part];
+      else {
+        ok = false;
+        break;
+      }
+    }
+    if (ok && cur !== undefined && cur !== null) return cur;
+  }
+  return fallback;
+}
+
 // ======================================================================
-// 🔢 NÚMEROS POR EXTENSO (PT-BR)
+// Entrada: texto + estado + contextos (wallets / categories)
+// ======================================================================
+
+function getInboundText(body) {
+  const direct =
+    pick(body, ["messageBody", "message", "text", "input", "message_text"], "") ||
+    pick(body, ["message.text.body"], "") ||
+    pick(body, ["entry.0.changes.0.value.messages.0.text.body"], "");
+
+  return String(direct || "").trim();
+}
+
+function getIncomingState(body) {
+  // suportar múltiplos formatos
+  return (
+    pick(body, ["conversation_state", "state", "data.conversation_state", "parsed_data.conversation_state"], null) ||
+    null
+  );
+}
+
+function getIncomingPending(body) {
+  const state = getIncomingState(body);
+
+  return (
+    pick(body, ["pending_transaction", "data.pending_transaction", "parsed_data.pending_transaction"], null) ||
+    pick(state, ["pending_transaction"], null) ||
+    null
+  );
+}
+
+function getWallets(body) {
+  const walletsRaw =
+    pick(body, ["context.wallets", "wallets", "data.wallets", "context.accounts", "accounts"], []) || [];
+
+  // normaliza {id,name}
+  const wallets = Array.isArray(walletsRaw)
+    ? walletsRaw
+        .map((w) => {
+          if (!w) return null;
+          const id = w.id || w.wallet_id || w.account_id || w.value || w.uuid;
+          const name = w.name || w.title || w.label || w.wallet_name;
+          if (!id && !name) return null;
+          return { id: String(id || name), name: String(name || id) };
+        })
+        .filter(Boolean)
+    : [];
+
+  return wallets;
+}
+
+function getCategories(body) {
+  const catsRaw =
+    pick(body, ["context.categories", "categories", "data.categories", "context.categorias"], []) || [];
+
+  const cats = Array.isArray(catsRaw)
+    ? catsRaw
+        .map((c) => {
+          if (!c) return null;
+          const id = c.id || c.category_id || c.uuid || c.value;
+          const name = c.name || c.title || c.label;
+          const type = c.type || c.kind; // "income" | "expense"
+          if (!id && !name) return null;
+          return { id: String(id || name), name: String(name || id), type: type ? String(type) : undefined };
+        })
+        .filter(Boolean)
+    : [];
+
+  return cats;
+}
+
+// ======================================================================
+// Números por extenso (PT-BR) + parse valor
 // ======================================================================
 
 const NUMBER_WORDS = {
@@ -109,11 +209,9 @@ function parseNumberFromTextPT(text) {
   return found ? total : null;
 }
 
-// Tenta capturar números digitados (inclui 1.234,56) e fallback por extenso
 function parseAmount(text) {
   const raw = String(text || "");
 
-  // Captura: 100 | 100,5 | 100.50 | 1.234,56 | 1234,56
   const m = raw.match(
     /(?:R\$\s*)?(-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|-?\d+(?:[.,]\d{1,2})?)/i
   );
@@ -121,13 +219,8 @@ function parseAmount(text) {
   if (m && m[1]) {
     let s = m[1];
 
-    if (s.includes(".") && s.includes(",")) {
-      // 1.234,56 -> 1234.56
-      s = s.replace(/\./g, "").replace(",", ".");
-    } else if (s.includes(",") && !s.includes(".")) {
-      // 1234,56 -> 1234.56
-      s = s.replace(",", ".");
-    }
+    if (s.includes(".") && s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+    else if (s.includes(",") && !s.includes(".")) s = s.replace(",", ".");
 
     const n = Number(s);
     if (Number.isFinite(n)) return n;
@@ -137,174 +230,9 @@ function parseAmount(text) {
 }
 
 // ======================================================================
-// 🧠 CATEGORIAS (FONTE DA VERDADE)
-// ======================================================================
-
-const ALL_CATEGORIES = {
-  expense: [
-    "Moradia / Aluguel",
-    "Moradia / Financiamento / Prestação",
-    "Moradia / Condomínio",
-    "Moradia / IPTU",
-    "Moradia / Reformas e manutenção",
-    "Moradia / Limpeza da casa",
-    "Moradia / Mobília e decoração",
-    "Moradia / Serviços domésticos",
-
-    "Alimentação / Supermercado",
-    "Alimentação / Açougue / Peixaria",
-    "Alimentação / Hortifruti",
-    "Alimentação / Padaria",
-    "Alimentação / Delivery",
-    "Alimentação / Restaurante / Lanches fora",
-
-    "Transporte / Combustível",
-    "Transporte / Ônibus / Trem / Metrô",
-    "Transporte / Uber / 99",
-    "Transporte / Estacionamento",
-
-    "Contas Mensais / Energia",
-    "Contas Mensais / Água",
-    "Contas Mensais / Gás",
-    "Contas Mensais / Internet",
-
-    "Mercado & Casa / Utensílios domésticos",
-    "Mercado & Casa / Produtos de limpeza",
-
-    "Outros / Outros"
-  ],
-
-  income: [
-    "Receita / Salário",
-    "Receita / Extra",
-    "Receita / Freelancer",
-    "Receita / Venda",
-    "Receita / Benefícios"
-  ]
-};
-
-// ======================================================================
-// 🧩 CLASSIFICAÇÃO LOCAL (RÁPIDA)
-// ======================================================================
-
-function findBestCategoryLocal(text, type) {
-  const t = norm(text);
-
-  if (type === "income") {
-    if (/salario|pagamento/.test(t)) return "Receita / Salário";
-    if (/freelancer|freela|job/.test(t)) return "Receita / Freelancer";
-    if (/venda|vendi/.test(t)) return "Receita / Venda";
-    if (/beneficio|benefícios|beneficios|vale/.test(t)) return "Receita / Benefícios";
-    return "Receita / Extra";
-  }
-
-  if (/aluguel/.test(t)) return "Moradia / Aluguel";
-  if (/iptu/.test(t)) return "Moradia / IPTU";
-  if (/luz|energia/.test(t)) return "Contas Mensais / Energia";
-  if (/agua/.test(t)) return "Contas Mensais / Água";
-  if (/gas/.test(t)) return "Contas Mensais / Gás";
-  if (/internet|wifi/.test(t)) return "Contas Mensais / Internet";
-  if (/uber|99/.test(t)) return "Transporte / Uber / 99";
-  if (/estacionamento/.test(t)) return "Transporte / Estacionamento";
-  if (/mercado|supermercado/.test(t)) return "Alimentação / Supermercado";
-  if (/delivery|ifood/.test(t)) return "Alimentação / Delivery";
-  if (/padaria/.test(t)) return "Alimentação / Padaria";
-  if (/acougue|açougue|peixaria/.test(t)) return "Alimentação / Açougue / Peixaria";
-  if (/hortifruti/.test(t)) return "Alimentação / Hortifruti";
-  if (/restaurante|lanche|lanches|pizza|hamburguer|hambúrguer/.test(t))
-    return "Alimentação / Restaurante / Lanches fora";
-  if (/combustivel|combustível|gasolina|etanol|diesel/.test(t)) return "Transporte / Combustível";
-  if (/onibus|ônibus|trem|metro|metrô/.test(t)) return "Transporte / Ônibus / Trem / Metrô";
-  if (/faca|garfo|panela|prato|copo|talher|utensilio|utensílio/.test(t))
-    return "Mercado & Casa / Utensílios domésticos";
-  if (/detergente|sabao|sabão|amaciante|alvejante|limpeza/.test(t))
-    return "Mercado & Casa / Produtos de limpeza";
-
-  return "Outros / Outros";
-}
-
-// ======================================================================
-// 🤖 OPENAI (FETCH NATIVO) — com timeout
-// ======================================================================
-
-async function callOpenAI(prompt, signal) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("OPENAI_API_KEY não configurada.");
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      temperature: 0,
-      messages: [{ role: "user", content: prompt }]
-    }),
-    signal
-  });
-
-  if (!response.ok) {
-    const txt = await response.text().catch(() => "");
-    throw new Error(`OpenAI API error (${response.status}): ${txt.slice(0, 300)}`);
-  }
-
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Resposta OpenAI vazia.");
-  return String(content).trim();
-}
-
-async function classifyWithAI(text, type) {
-  const categories = ALL_CATEGORIES[type];
-
-  const prompt = `
-Classifique a frase abaixo em UMA das categorias listadas.
-Responda SOMENTE com o texto EXATO da categoria.
-Não explique.
-
-Frase:
-"${text}"
-
-Categorias:
-${categories.map(c => "- " + c).join("\n")}
-`.trim();
-
-  const maxAttempts = 3;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-
-      const resultRaw = await callOpenAI(prompt, controller.signal);
-
-      clearTimeout(timeout);
-
-      const result = resultRaw
-        .replace(/^[-–•]\s*/g, "")
-        .replace(/^"+|"+$/g, "")
-        .trim();
-
-      if (categories.includes(result)) return result;
-
-      return type === "expense" ? "Outros / Outros" : "Receita / Extra";
-    } catch (err) {
-      if (attempt === maxAttempts) {
-        return type === "expense" ? "Outros / Outros" : "Receita / Extra";
-      }
-      await new Promise(r => setTimeout(r, 400 * attempt));
-    }
-  }
-
-  return type === "expense" ? "Outros / Outros" : "Receita / Extra";
-}
-
-// ======================================================================
-// 📝 DESCRIÇÃO ESPECÍFICA (MANTÉM O QUE TIVER NA MENSAGEM)
-// - Receita: "Base / Subtipo" (ex: "Uber / Extra")
-// - Despesa: "Base" (ex: "Uber", "Cadeira", "Conta de Luz")
+// Descrição específica (mantém o que tiver na mensagem)
+// - Receita: "Base / Subtipo" (ex: Uber / Extra)
+// - Despesa: só Base
 // ======================================================================
 
 const STOPWORDS = new Set([
@@ -343,79 +271,66 @@ function toTitleCase(str) {
   return String(str || "")
     .split(/\s+/)
     .filter(Boolean)
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 }
 
-/**
- * Extrai o mais específico possível da mensagem.
- * Estratégia:
- * 1) Se tiver "de/do/da" -> pega até 3 palavras após (uber, uber eats, etc.)
- * 2) Senão -> limpa verbos/valores e pega até 4 tokens relevantes
- */
 function extractSpecificFromMessage(msg) {
   const raw = norm(msg);
 
-  // 1) captura "de/do/da" + até 3 palavras
+  // pega "de/do/da X (até 3 palavras)"
   const after = raw.match(/\b(?:de|do|da)\s+([a-z0-9-]+)(?:\s+([a-z0-9-]+))?(?:\s+([a-z0-9-]+))?/i);
-  if (after && (after[1] || after[2] || after[3])) {
+  if (after) {
     const picked = [after[1], after[2], after[3]]
       .filter(Boolean)
-      .filter(w => !STOPWORDS.has(w))
+      .filter((w) => !STOPWORDS.has(w))
       .slice(0, 3)
       .join(" ");
     if (picked) return toTitleCase(picked);
   }
 
-  // 2) fallback: limpeza geral
-  let text = raw;
+  // fallback: limpa verbos + valores
+  let text = raw.replace(VERBS_RE, " ");
 
-  text = text.replace(VERBS_RE, " ");
-
-  // remove valores digitados
   text = text.replace(/(?:r\$\s*)?-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})/gi, " ");
   text = text.replace(/(?:r\$\s*)?-?\d+(?:[.,]\d{1,2})?/gi, " ");
 
-  // remove números por extenso
-  Object.keys(NUMBER_WORDS).forEach(w => {
+  Object.keys(NUMBER_WORDS).forEach((w) => {
     const ww = norm(w);
     text = text.replace(new RegExp(`\\b${ww}\\b`, "g"), " ");
   });
 
-  // limpa pontuação
   text = text.replace(/[^\p{L}\p{N}\s-]/gu, " ");
 
   const tokens = text
     .split(/\s+/)
-    .map(t => t.trim())
+    .map((t) => t.trim())
     .filter(Boolean)
-    .filter(t => !STOPWORDS.has(t))
-    .filter(t => t.length >= 2);
+    .filter((t) => !STOPWORDS.has(t))
+    .filter((t) => t.length >= 2);
 
   const base = tokens.slice(0, 4).join(" ");
   return base ? toTitleCase(base) : "";
 }
 
-function inferDescription(msg, category, type) {
+function inferDescription(msg, categoryName, type) {
   const base = extractSpecificFromMessage(msg);
 
   if (base) {
     if (type === "income") {
-      const subtype = String(category || "").split("/")[1]?.trim() || "Extra";
+      const subtype = String(categoryName || "").split("/")[1]?.trim() || "Extra";
 
-      // evita duplicar: "Freelancer / Freelancer"
-      const baseNorm = norm(base);
-      const subNorm = norm(subtype);
-      if (subNorm && baseNorm.includes(subNorm)) return base;
+      // evita duplicar "Freelancer / Freelancer"
+      if (norm(base).includes(norm(subtype))) return base;
 
       return `${base} / ${subtype}`;
     }
     return base;
   }
 
-  // fallback: se não deu pra extrair do texto, usa a categoria (filho)
-  if (category && !String(category).includes("Outros")) {
-    const parts = String(category).split("/").map(p => p.trim()).filter(Boolean);
+  // fallback: usa filho da categoria
+  if (categoryName && !String(categoryName).includes("Outros")) {
+    const parts = String(categoryName).split("/").map((p) => p.trim()).filter(Boolean);
     return parts.slice(1).join(" / ") || "Lançamento";
   }
 
@@ -423,50 +338,183 @@ function inferDescription(msg, category, type) {
 }
 
 // ======================================================================
-// 📦 EXTRAÇÃO (NUNCA quebra por erro de IA)
+// Carteiras (contas): detectar no texto / perguntar / interpretar resposta
 // ======================================================================
 
-async function extractTransaction(rawMsg) {
-  const msg = String(rawMsg || "").trim();
-  const t = norm(msg);
+function findWalletInText(text, wallets) {
+  const t = norm(text);
+  if (!wallets?.length) return null;
 
-  const type = /(recebi|ganhei|salario|venda|vendi|freelancer|freela|entrou)/i.test(t)
-    ? "income"
-    : "expense";
+  // match por inclusão
+  let best = null;
+  for (const w of wallets) {
+    const wn = norm(w.name);
+    if (!wn) continue;
 
-  const amount = parseAmount(msg);
-
-  let category = findBestCategoryLocal(msg, type);
-
-  // IA somente quando local não resolveu
-  if (category === "Outros / Outros") {
-    category = await classifyWithAI(msg, type);
-  }
-
-  const description = inferDescription(msg, category, type);
-
-  if (!Number.isFinite(amount) || amount === null || amount === 0) {
-    return {
-      needsMoreInfo: true,
-      reply: `Qual o valor de *${description}*? 💰`,
-      partial: { type, description, category_name: category, frequency: "variable" }
-    };
-  }
-
-  return {
-    needsMoreInfo: false,
-    data: {
-      type,
-      amount: Number(amount),
-      description,
-      category_name: category,
-      frequency: "variable"
+    if (t === wn || t.includes(wn) || wn.includes(t)) {
+      // escolhe o mais longo (mais específico)
+      if (!best || wn.length > norm(best.name).length) best = w;
     }
-  };
+  }
+  return best;
+}
+
+function parseWalletSelection(userText, wallets) {
+  const t = String(userText || "").trim();
+  if (!wallets?.length) return null;
+
+  // 1) por número (ex: "2")
+  const num = t.match(/^\s*(\d{1,2})\s*$/);
+  if (num) {
+    const idx = Number(num[1]) - 1;
+    if (idx >= 0 && idx < wallets.length) return wallets[idx];
+  }
+
+  // 2) por nome (parcial)
+  return findWalletInText(t, wallets);
+}
+
+function buildWalletQuestion(wallets) {
+  if (!wallets?.length) {
+    return `Qual conta (carteira) devo usar? 👛`;
+  }
+
+  const lines = wallets.map((w, i) => `${i + 1}) ${w.name}`).join("\n");
+  return `Qual conta (carteira) devo usar? 👛\n\n${lines}\n\nResponda com o *número* ou o *nome* da conta.`;
 }
 
 // ======================================================================
-// 🧾 CONFIRMAÇÃO — FORMATO SOLICITADO
+// Categorias (obrigatórias): local + IA fallback + resolve id
+// ======================================================================
+
+// Se você tiver suas categorias no banco, normalmente o backend manda a lista em context.categories.
+// Aqui eu escolho por heurística e depois tento mapear para ID pelo nome.
+
+const FALLBACK_CATEGORIES = {
+  expense: [
+    "Moradia / Aluguel",
+    "Moradia / Financiamento / Prestação",
+    "Moradia / Condomínio",
+    "Moradia / IPTU",
+    "Contas Mensais / Energia",
+    "Contas Mensais / Água",
+    "Contas Mensais / Gás",
+    "Contas Mensais / Internet",
+    "Alimentação / Supermercado",
+    "Alimentação / Delivery",
+    "Alimentação / Restaurante / Lanches fora",
+    "Transporte / Uber / 99",
+    "Transporte / Combustível",
+    "Outros / Outros"
+  ],
+  income: ["Receita / Salário", "Receita / Extra", "Receita / Freelancer", "Receita / Venda", "Receita / Benefícios"]
+};
+
+function findBestCategoryLocal(text, type) {
+  const t = norm(text);
+
+  if (type === "income") {
+    if (/salario|pagamento/.test(t)) return "Receita / Salário";
+    if (/freelancer|freela|job/.test(t)) return "Receita / Freelancer";
+    if (/venda|vendi/.test(t)) return "Receita / Venda";
+    if (/beneficio|benefícios|beneficios|vale/.test(t)) return "Receita / Benefícios";
+    return "Receita / Extra";
+  }
+
+  if (/aluguel/.test(t)) return "Moradia / Aluguel";
+  if (/iptu/.test(t)) return "Moradia / IPTU";
+  if (/luz|energia/.test(t)) return "Contas Mensais / Energia";
+  if (/agua/.test(t)) return "Contas Mensais / Água";
+  if (/gas/.test(t)) return "Contas Mensais / Gás";
+  if (/internet|wifi/.test(t)) return "Contas Mensais / Internet";
+  if (/uber|99/.test(t)) return "Transporte / Uber / 99";
+  if (/combustivel|combustível|gasolina|etanol|diesel/.test(t)) return "Transporte / Combustível";
+  if (/mercado|supermercado/.test(t)) return "Alimentação / Supermercado";
+  if (/delivery|ifood/.test(t)) return "Alimentação / Delivery";
+  if (/restaurante|lanche|lanches|pizza|hamburguer|hambúrguer/.test(t))
+    return "Alimentação / Restaurante / Lanches fora";
+
+  return "Outros / Outros";
+}
+
+async function callOpenAI(prompt, signal) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY não configurada.");
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      temperature: 0,
+      messages: [{ role: "user", content: prompt }]
+    }),
+    signal
+  });
+
+  if (!response.ok) {
+    const txt = await response.text().catch(() => "");
+    throw new Error(`OpenAI API error (${response.status}): ${txt.slice(0, 300)}`);
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Resposta OpenAI vazia.");
+  return String(content).trim();
+}
+
+async function classifyWithAI(text, type, allowed) {
+  const categories = allowed?.length ? allowed : FALLBACK_CATEGORIES[type];
+
+  const prompt = `
+Classifique a frase abaixo em UMA das categorias listadas.
+Responda SOMENTE com o texto EXATO da categoria.
+Não explique.
+
+Frase:
+"${text}"
+
+Categorias:
+${categories.map((c) => "- " + c).join("\n")}
+`.trim();
+
+  const maxAttempts = 2;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+
+      const resultRaw = await callOpenAI(prompt, controller.signal);
+      clearTimeout(timeout);
+
+      const result = resultRaw.replace(/^[-–•]\s*/g, "").replace(/^"+|"+$/g, "").trim();
+      if (categories.includes(result)) return result;
+
+      return type === "expense" ? "Outros / Outros" : "Receita / Extra";
+    } catch (e) {
+      if (attempt === maxAttempts) return type === "expense" ? "Outros / Outros" : "Receita / Extra";
+    }
+  }
+
+  return type === "expense" ? "Outros / Outros" : "Receita / Extra";
+}
+
+function resolveCategoryIdByName(categoryName, categories, type) {
+  if (!categoryName || !categories?.length) return null;
+  const target = norm(categoryName);
+
+  // tenta bater exato
+  let found = categories.find((c) => norm(c.name) === target && (!type || !c.type || norm(c.type) === norm(type)));
+  if (found) return found.id;
+
+  // tenta por inclusão (caso seu DB tenha nomes ligeiramente diferentes)
+  found = categories.find((c) => target.includes(norm(c.name)) || norm(c.name).includes(target));
+  return found ? found.id : null;
+}
+
+// ======================================================================
+// Confirmação (formato solicitado) — agora inclui CONTA
 // ======================================================================
 
 function buildConfirmationReply(data) {
@@ -475,57 +523,292 @@ function buildConfirmationReply(data) {
   const label = isIncome ? "Receita" : "Despesa";
   const date = formatDateBR(new Date());
 
+  const walletLine = data.wallet_name ? `👛 Conta: ${data.wallet_name}\n` : "";
+
   return `${emoji} ${label}  |  Variável
 💰 Valor: R$ ${formatAmount2(data.amount)}
 📝 Descrição: ${data.description}
 📁 Categoria: ${data.category_name}
-${date}
+${walletLine}${date}
 
 Confirma o lançamento? (Sim/Não)`;
 }
 
 // ======================================================================
-// 🚀 HANDLER
+// Confirmação SIM/NÃO
+// ======================================================================
+
+function isYes(text) {
+  const t = norm(text);
+  return t === "sim" || t === "s" || t === "ss" || t.includes("confirm") || t.includes("pode");
+}
+
+function isNo(text) {
+  const t = norm(text);
+  return t === "nao" || t === "não" || t === "n" || t.includes("cancela") || t.includes("não quero");
+}
+
+// ======================================================================
+// Extração + fluxo com estado
+// ======================================================================
+
+async function buildTransactionFromMessage(message, wallets, categories) {
+  const msg = String(message || "").trim();
+  const t = norm(msg);
+
+  const type = /(recebi|ganhei|salario|salário|venda|vendi|freelancer|freela|entrou)/i.test(t)
+    ? "income"
+    : "expense";
+
+  const amount = parseAmount(msg);
+
+  // Categoria: heurística + IA fallback
+  let categoryName = findBestCategoryLocal(msg, type);
+  const allowedCategoryNames =
+    categories?.length
+      ? categories
+          .filter((c) => !c.type || norm(c.type) === norm(type))
+          .map((c) => c.name)
+      : null;
+
+  if (categoryName === "Outros / Outros") {
+    categoryName = await classifyWithAI(msg, type, allowedCategoryNames);
+  }
+
+  const categoryId = resolveCategoryIdByName(categoryName, categories, type);
+
+  // Carteira: tenta achar no texto
+  const wallet = findWalletInText(msg, wallets);
+
+  const wallet_id = wallet?.id || null;
+  const wallet_name = wallet?.name || null;
+
+  const description = inferDescription(msg, categoryName, type);
+
+  return {
+    type,
+    amount: Number.isFinite(amount) ? Number(amount) : null,
+    description,
+    category_name: categoryName,
+    category_id: categoryId,
+    wallet_id,
+    wallet_name,
+    frequency: "variable"
+  };
+}
+
+function missingFields(tx) {
+  const missing = [];
+  if (!tx.amount || !Number.isFinite(Number(tx.amount)) || Number(tx.amount) === 0) missing.push("amount");
+  if (!tx.wallet_id) missing.push("wallet");
+  if (!tx.category_id && tx.category_name) {
+    // se seu backend exigir category_id estritamente e não deu pra mapear
+    missing.push("category_id");
+  }
+  return missing;
+}
+
+function mergeTx(base, patch) {
+  return {
+    ...base,
+    ...patch,
+    // garante campos
+    type: patch.type || base.type,
+    frequency: patch.frequency || base.frequency || "variable"
+  };
+}
+
+// ======================================================================
+// Resposta padrão com pending_transaction sempre devolvido
+// ======================================================================
+
+function respond(res, { action, reply, tx }) {
+  const flat = tx ? { ...tx } : null;
+
+  return ok(res, {
+    action,
+    reply,
+    data: flat ? { ...flat, pending_transaction: flat } : { pending_transaction: tx || null },
+    pending_transaction: tx || null
+  });
+}
+
+// ======================================================================
+// Handler
 // ======================================================================
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const rawMessage = String(req.body?.message || "").trim();
+    const body = req.body || {};
+    const text = getInboundText(body);
 
-    if (!rawMessage) {
-      return ok(res, {
+    const wallets = getWallets(body);
+    const categories = getCategories(body);
+
+    let pending = getIncomingPending(body); // pode vir do seu storage (parsed_data) ou conversation_state
+    const hasPending = pending && typeof pending === "object";
+
+    // ============================================================
+    // 1) Se estamos aguardando alguma informação do usuário
+    // ============================================================
+    if (hasPending && pending.awaiting) {
+      const awaiting = pending.awaiting;
+
+      // aguardando CONTA
+      if (awaiting === "wallet") {
+        const chosen = parseWalletSelection(text, wallets);
+        if (!chosen) {
+          return respond(res, {
+            action: "need_wallet",
+            reply: `Não entendi a conta 😕\n\n${buildWalletQuestion(wallets)}`,
+            tx: pending
+          });
+        }
+
+        const updated = mergeTx(pending, { wallet_id: chosen.id, wallet_name: chosen.name, awaiting: null });
+
+        const miss = missingFields(updated);
+
+        // se ainda falta valor
+        if (miss.includes("amount")) {
+          updated.awaiting = "amount";
+          return respond(res, {
+            action: "need_amount",
+            reply: `Qual o valor de *${updated.description}*? 💰`,
+            tx: updated
+          });
+        }
+
+        // se ainda falta category_id (quando seu DB exige)
+        if (miss.includes("category_id")) {
+          // aqui você pode optar por perguntar categoria; por enquanto mantém nome e segue.
+          // se quiser travar: descomente.
+          // updated.awaiting = "category";
+          // return respond(res, { action:"need_category", reply:"Qual categoria devo usar?", tx: updated });
+        }
+
+        // pronto -> confirmação
+        updated.awaiting = "confirmation";
+        return respond(res, {
+          action: "awaiting_confirmation",
+          reply: buildConfirmationReply(updated),
+          tx: updated
+        });
+      }
+
+      // aguardando VALOR
+      if (awaiting === "amount") {
+        const amount = parseAmount(text);
+
+        if (!Number.isFinite(amount) || amount === null || amount === 0) {
+          return respond(res, {
+            action: "need_amount",
+            reply: "Não entendi o valor. Pode enviar só o número? Ex: 40 ou 40,00",
+            tx: pending
+          });
+        }
+
+        const updated = mergeTx(pending, { amount: Number(amount), awaiting: null });
+
+        const miss = missingFields(updated);
+
+        // se falta conta
+        if (miss.includes("wallet")) {
+          updated.awaiting = "wallet";
+          return respond(res, {
+            action: "need_wallet",
+            reply: buildWalletQuestion(wallets),
+            tx: updated
+          });
+        }
+
+        // pronto -> confirmação
+        updated.awaiting = "confirmation";
+        return respond(res, {
+          action: "awaiting_confirmation",
+          reply: buildConfirmationReply(updated),
+          tx: updated
+        });
+      }
+
+      // aguardando CONFIRMAÇÃO
+      if (awaiting === "confirmation") {
+        if (isYes(text)) {
+          const finalTx = { ...pending, awaiting: null };
+
+          return respond(res, {
+            action: "confirmed",
+            reply: "Perfeito ✅ Lançamento confirmado.",
+            tx: finalTx
+          });
+        }
+
+        if (isNo(text)) {
+          const canceled = { ...pending, awaiting: null };
+          return respond(res, {
+            action: "canceled",
+            reply: "Certo ✅ Lançamento cancelado.",
+            tx: canceled
+          });
+        }
+
+        return respond(res, {
+          action: "awaiting_confirmation",
+          reply: "Responda *Sim* para confirmar ou *Não* para cancelar.",
+          tx: pending
+        });
+      }
+    }
+
+    // ============================================================
+    // 2) Sem pendência: interpretar mensagem nova
+    // ============================================================
+    if (!text) {
+      return respond(res, {
         action: "need_more_info",
         reply: "Envie uma mensagem com o lançamento. Ex: “Paguei 50 no mercado”",
-        data: null
+        tx: null
       });
     }
 
-    const parsed = await extractTransaction(rawMessage);
+    const tx = await buildTransactionFromMessage(text, wallets, categories);
 
-    if (parsed.needsMoreInfo) {
-      return ok(res, {
-        reply: parsed.reply,
-        action: "need_more_info",
-        data: parsed.partial
+    const miss = missingFields(tx);
+
+    // 2.1 falta valor
+    if (miss.includes("amount")) {
+      const pendingTx = { ...tx, awaiting: "amount" };
+      return respond(res, {
+        action: "need_amount",
+        reply: `Qual o valor de *${pendingTx.description}*? 💰`,
+        tx: pendingTx
       });
     }
 
-    return ok(res, {
-      reply: buildConfirmationReply(parsed.data),
+    // 2.2 falta conta -> PERGUNTA LISTANDO TODAS
+    if (miss.includes("wallet")) {
+      const pendingTx = { ...tx, awaiting: "wallet" };
+      return respond(res, {
+        action: "need_wallet",
+        reply: buildWalletQuestion(wallets),
+        tx: pendingTx
+      });
+    }
+
+    // 2.3 pronto -> confirmação completa
+    const pendingTx = { ...tx, awaiting: "confirmation" };
+    return respond(res, {
       action: "awaiting_confirmation",
-      data: parsed.data
+      reply: buildConfirmationReply(pendingTx),
+      tx: pendingTx
     });
   } catch (err) {
     console.error(err);
-
-    // Nunca explode o WhatsApp por erro interno
     return ok(res, {
-      reply: "Serviço temporariamente indisponível 😕",
-      action: "error"
+      action: "error",
+      reply: "Serviço temporariamente indisponível 😕"
     });
   }
 }
