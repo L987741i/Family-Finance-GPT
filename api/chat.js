@@ -4,7 +4,8 @@
 // ✔ Regras locais + IA (somente fallback)
 // ✔ Retry / Timeout
 // ✔ Categoria obrigatória
-// ✔ Descrição inteligente
+// ✔ Descrição específica (mantém o que tiver na mensagem)
+// ✔ Receita: "Base / Subtipo" (ex: "Uber / Extra")
 // ✔ Confirmação no formato solicitado
 // ✔ NUNCA quebra o fluxo por erro de IA (sempre fallback)
 
@@ -39,7 +40,7 @@ function formatAmount2(amount) {
 }
 
 // ======================================================================
-// 🔢 NÚMEROS POR EXTENSO (PT-BR) — simples e estável
+// 🔢 NÚMEROS POR EXTENSO (PT-BR)
 // ======================================================================
 
 const NUMBER_WORDS = {
@@ -215,7 +216,7 @@ function findBestCategoryLocal(text, type) {
   if (/uber|99/.test(t)) return "Transporte / Uber / 99";
   if (/estacionamento/.test(t)) return "Transporte / Estacionamento";
   if (/mercado|supermercado/.test(t)) return "Alimentação / Supermercado";
-  if (/delivery|ifood|ifood/.test(t)) return "Alimentação / Delivery";
+  if (/delivery|ifood/.test(t)) return "Alimentação / Delivery";
   if (/padaria/.test(t)) return "Alimentação / Padaria";
   if (/acougue|açougue|peixaria/.test(t)) return "Alimentação / Açougue / Peixaria";
   if (/hortifruti/.test(t)) return "Alimentação / Hortifruti";
@@ -265,7 +266,6 @@ async function callOpenAI(prompt, signal) {
 }
 
 async function classifyWithAI(text, type) {
-  // IA é SOMENTE fallback. Se falhar, não quebra nada.
   const categories = ALL_CATEGORIES[type];
 
   const prompt = `
@@ -298,7 +298,6 @@ ${categories.map(c => "- " + c).join("\n")}
 
       if (categories.includes(result)) return result;
 
-      // Se a IA respondeu fora da lista, não inventa: fallback padrão.
       return type === "expense" ? "Outros / Outros" : "Receita / Extra";
     } catch (err) {
       if (attempt === maxAttempts) {
@@ -312,43 +311,124 @@ ${categories.map(c => "- " + c).join("\n")}
 }
 
 // ======================================================================
-// 📝 DESCRIÇÃO INTELIGENTE
+// 📝 DESCRIÇÃO ESPECÍFICA (MANTÉM O QUE TIVER NA MENSAGEM)
+// - Receita: "Base / Subtipo" (ex: "Uber / Extra")
+// - Despesa: "Base" (ex: "Uber", "Cadeira", "Conta de Luz")
 // ======================================================================
 
-function inferDescription(msg, category) {
-  const cat = String(category || "");
+const STOPWORDS = new Set([
+  "por",
+  "reais",
+  "real",
+  "com",
+  "de",
+  "da",
+  "do",
+  "das",
+  "dos",
+  "no",
+  "na",
+  "nos",
+  "nas",
+  "um",
+  "uma",
+  "uns",
+  "umas",
+  "e",
+  "a",
+  "o",
+  "as",
+  "os",
+  "para",
+  "pra",
+  "pro",
+  "em"
+]);
 
-  // Se a categoria é boa, a descrição vira a parte "filha" (tudo após o primeiro "/")
-  if (cat && !cat.includes("Outros")) {
-    const parts = cat.split("/").map(p => p.trim()).filter(Boolean);
-    const child = parts.slice(1).join(" / ");
-    return child || "Lançamento";
+const VERBS_RE =
+  /\b(paguei|gastei|comprei|recebi|ganhei|entrou|pagar|gastar|comprar|receber|ganhar|entrar)\b/gi;
+
+function toTitleCase(str) {
+  return String(str || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/**
+ * Extrai o mais específico possível da mensagem.
+ * Estratégia:
+ * 1) Se tiver "de/do/da" -> pega até 3 palavras após (uber, uber eats, etc.)
+ * 2) Senão -> limpa verbos/valores e pega até 4 tokens relevantes
+ */
+function extractSpecificFromMessage(msg) {
+  const raw = norm(msg);
+
+  // 1) captura "de/do/da" + até 3 palavras
+  const after = raw.match(/\b(?:de|do|da)\s+([a-z0-9-]+)(?:\s+([a-z0-9-]+))?(?:\s+([a-z0-9-]+))?/i);
+  if (after && (after[1] || after[2] || after[3])) {
+    const picked = [after[1], after[2], after[3]]
+      .filter(Boolean)
+      .filter(w => !STOPWORDS.has(w))
+      .slice(0, 3)
+      .join(" ");
+    if (picked) return toTitleCase(picked);
   }
 
-  // Senão, tenta "limpar" o texto
-  let text = String(msg || "");
+  // 2) fallback: limpeza geral
+  let text = raw;
 
-  // remove verbos comuns
-  text = text.replace(/\b(paguei|gastei|comprei|recebi|ganhei|entrou|pagar|gastar|comprar)\b/gi, " ");
+  text = text.replace(VERBS_RE, " ");
 
   // remove valores digitados
-  text = text.replace(/(?:R\$\s*)?-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})/gi, " ");
-  text = text.replace(/(?:R\$\s*)?-?\d+(?:[.,]\d{1,2})?/gi, " ");
+  text = text.replace(/(?:r\$\s*)?-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})/gi, " ");
+  text = text.replace(/(?:r\$\s*)?-?\d+(?:[.,]\d{1,2})?/gi, " ");
 
   // remove números por extenso
   Object.keys(NUMBER_WORDS).forEach(w => {
-    const ww = removeDiacritics(w);
-    text = text.replace(new RegExp(`\\b${ww}\\b`, "gi"), " ");
-    text = text.replace(new RegExp(`\\b${w}\\b`, "gi"), " ");
+    const ww = norm(w);
+    text = text.replace(new RegExp(`\\b${ww}\\b`, "g"), " ");
   });
 
-  // remove “lixo”
-  text = text
-    .replace(/\b(por|reais|real|com|de|da|do|das|dos|uma|um|uns|umas|no|na|nos|nas|e)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  // limpa pontuação
+  text = text.replace(/[^\p{L}\p{N}\s-]/gu, " ");
 
-  return text ? text.charAt(0).toUpperCase() + text.slice(1) : "Lançamento";
+  const tokens = text
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(Boolean)
+    .filter(t => !STOPWORDS.has(t))
+    .filter(t => t.length >= 2);
+
+  const base = tokens.slice(0, 4).join(" ");
+  return base ? toTitleCase(base) : "";
+}
+
+function inferDescription(msg, category, type) {
+  const base = extractSpecificFromMessage(msg);
+
+  if (base) {
+    if (type === "income") {
+      const subtype = String(category || "").split("/")[1]?.trim() || "Extra";
+
+      // evita duplicar: "Freelancer / Freelancer"
+      const baseNorm = norm(base);
+      const subNorm = norm(subtype);
+      if (subNorm && baseNorm.includes(subNorm)) return base;
+
+      return `${base} / ${subtype}`;
+    }
+    return base;
+  }
+
+  // fallback: se não deu pra extrair do texto, usa a categoria (filho)
+  if (category && !String(category).includes("Outros")) {
+    const parts = String(category).split("/").map(p => p.trim()).filter(Boolean);
+    return parts.slice(1).join(" / ") || "Lançamento";
+  }
+
+  return "Lançamento";
 }
 
 // ======================================================================
@@ -367,14 +447,13 @@ async function extractTransaction(rawMsg) {
 
   let category = findBestCategoryLocal(msg, type);
 
-  // IA somente quando local não resolveu (Outros)
+  // IA somente quando local não resolveu
   if (category === "Outros / Outros") {
     category = await classifyWithAI(msg, type);
   }
 
-  const description = inferDescription(msg, category);
+  const description = inferDescription(msg, category, type);
 
-  // Se não achou valor (ou veio 0), pede valor
   if (!Number.isFinite(amount) || amount === null || amount === 0) {
     return {
       needsMoreInfo: true,
