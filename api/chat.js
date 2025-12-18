@@ -1,13 +1,4 @@
-// /api/chat.js — Family Finance IA
-// VERSÃO FINAL 2025 (SEM SDK)
-// ✔ fetch nativo (OpenAI)
-// ✔ Regras locais + IA (somente fallback)
-// ✔ Retry / Timeout
-// ✔ Categoria obrigatória
-// ✔ Descrição específica (mantém o que tiver na mensagem)
-// ✔ Receita: "Base / Subtipo" (ex: "Uber / Extra")
-// ✔ Confirmação no formato solicitado
-// ✔ NUNCA quebra o fluxo por erro de IA (sempre fallback)
+// /Funcionando com alguns problemas, MESa chama resumo, não pergunta conta, não altera
 
 const TZ = "America/Sao_Paulo";
 
