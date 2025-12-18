@@ -320,21 +320,23 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({
-      reply: `🔴 ${parsed.data.type === "income" ? "Receita" : "Despesa"}
+      const isIncome = parsed.data.type === "income";
+const emoji = isIncome ? "🟢" : "🔴";
+const label = isIncome ? "Receita" : "Despesa";
+
+const date = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: "America/Sao_Paulo"
+}).format(new Date());
+
+return res.status(200).json({
+  reply: `${emoji} ${label}  |  Variável
 💰 Valor: R$ ${parsed.data.amount.toFixed(2)}
 📝 Descrição: ${parsed.data.description}
 📁 Categoria: ${parsed.data.category_name}
+${date}
 
 Confirma o lançamento? (Sim/Não)`,
-      action: "awaiting_confirmation",
-      data: parsed.data
-    });
+  action: "awaiting_confirmation",
+  data: parsed.data
+});
 
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({
-      reply: "Serviço temporariamente indisponível 😕",
-      action: "error"
-    });
-  }
-}
