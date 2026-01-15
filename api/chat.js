@@ -651,20 +651,27 @@ async function buildTransactionFromMessage(message, wallets, categories) {
 // ======================================================================
 
 async function respond(res, key, { action, reply, tx }) {
-  // conversa/estado para seu integrador salvar como quiser
-  const conversation_state = tx ? { pending_transaction: tx } : null;
+  const isFinal = action === "confirmed" || action === "canceled";
 
-  if (tx && tx.awaiting) await saveState(key, tx);
-  if (!tx || action === "confirmed" || action === "canceled") await clearState(key);
+  // Estado que o integrador deve considerar como "pendente"
+  const pending_transaction = !isFinal && tx ? tx : null;
+
+  // Só salva estado quando realmente está aguardando algo
+  if (pending_transaction && pending_transaction.awaiting) {
+    await saveState(key, pending_transaction);
+  } else {
+    await clearState(key);
+  }
 
   return ok(res, {
     action,
     reply,
-    data: tx ? { ...tx, pending_transaction: tx } : { pending_transaction: null },
-    pending_transaction: tx || null,
-    conversation_state
+    data: { pending_transaction },
+    pending_transaction,
+    conversation_state: pending_transaction ? { pending_transaction } : null
   });
 }
+
 
 // ======================================================================
 // Handler
