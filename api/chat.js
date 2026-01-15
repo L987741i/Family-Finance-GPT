@@ -1,12 +1,10 @@
 // /api/chat.js — Family Finance IA (WhatsApp)
-
 // ✅ SEM SDK (OpenAI via fetch opcional)
 // ✅ Pergunta CONTA quando faltar (lista todas) e NÃO reinicia transação
 // ✅ Estado persistido no Supabase (REST) + fallback em memória
 // ✅ Confirmação no formato solicitado
 // ✅ Descrição mais específica do texto (ex: "Uber / Extra")
 // ✅ Nunca quebra por IA (fallback local)
-// ✅ CORREÇÃO: Respeita reset_state do Edge Function para evitar loops
 
 const TZ = "America/Sao_Paulo";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
@@ -78,6 +76,7 @@ function formatAmount2(amount) {
 // ======================================================================
 // Identificadores do usuário (para chave do estado)
 // ======================================================================
+
 function getFromPhone(body) {
   return (
     pick(body, ["fromPhone", "from", "wa_id"], "") ||
@@ -101,6 +100,7 @@ function buildStateKey(body) {
 // ======================================================================
 // Supabase REST (sem SDK)
 // ======================================================================
+
 function hasSupabase() {
   return !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
@@ -113,6 +113,7 @@ async function supabaseFetch(path, options = {}) {
     Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
     ...options.headers
   };
+
   const res = await fetch(url, { ...options, headers });
   return res;
 }
@@ -124,11 +125,13 @@ async function loadState(key) {
 
   // 2) supabase
   if (!hasSupabase()) return null;
+
   try {
     const res = await supabaseFetch(
       `/rest/v1/ff_conversation_state?key=eq.${encodeURIComponent(key)}&select=state,updated_at`,
       { method: "GET" }
     );
+
     if (!res.ok) return null;
     const rows = await res.json();
     const row = rows?.[0];
@@ -147,13 +150,16 @@ async function loadState(key) {
 
 async function saveState(key, state) {
   memoryState.set(key, state);
+
   if (!hasSupabase()) return;
+
   try {
     const payload = {
       key,
       state,
       updated_at: new Date().toISOString()
     };
+
     await supabaseFetch(`/rest/v1/ff_conversation_state`, {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
@@ -166,7 +172,9 @@ async function saveState(key, state) {
 
 async function clearState(key) {
   memoryState.delete(key);
+
   if (!hasSupabase()) return;
+
   try {
     await supabaseFetch(`/rest/v1/ff_conversation_state?key=eq.${encodeURIComponent(key)}`, {
       method: "DELETE",
@@ -180,6 +188,7 @@ async function clearState(key) {
 // ======================================================================
 // Entrada: texto + wallets + categories
 // ======================================================================
+
 function getInboundText(body) {
   const direct =
     pick(body, ["messageBody", "message", "text", "input", "message_text"], "") ||
@@ -191,6 +200,7 @@ function getInboundText(body) {
 function getWallets(body) {
   const walletsRaw =
     pick(body, ["context.wallets", "wallets", "data.wallets", "context.accounts", "accounts"], []) || [];
+
   return Array.isArray(walletsRaw)
     ? walletsRaw
         .map((w) => {
@@ -207,6 +217,7 @@ function getWallets(body) {
 function getCategories(body) {
   const catsRaw =
     pick(body, ["context.categories", "categories", "data.categories", "context.categorias"], []) || [];
+
   return Array.isArray(catsRaw)
     ? catsRaw
         .map((c) => {
@@ -224,6 +235,7 @@ function getCategories(body) {
 // ======================================================================
 // Números por extenso + parse valor
 // ======================================================================
+
 const NUMBER_WORDS = {
   zero: 0,
   um: 1,
@@ -273,9 +285,11 @@ const NUMBER_WORDS = {
 function parseNumberFromTextPT(text) {
   const t = norm(text).replace(/[^\p{L}\p{N}\s-]/gu, " ");
   const words = t.split(/\s+/).filter(Boolean);
+
   let total = 0;
   let current = 0;
   let found = false;
+
   for (const w of words) {
     if (w === "e") continue;
     const value = NUMBER_WORDS[w];
@@ -290,15 +304,18 @@ function parseNumberFromTextPT(text) {
       }
     }
   }
+
   total += current;
   return found ? total : null;
 }
 
 function parseAmount(text) {
   const raw = String(text || "");
+
   const m = raw.match(
     /(?:R\$\s*)?(-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|-?\d+(?:[.,]\d{1,2})?)/i
   );
+
   if (m && m[1]) {
     let s = m[1];
     if (s.includes(".") && s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
@@ -306,12 +323,14 @@ function parseAmount(text) {
     const n = Number(s);
     if (Number.isFinite(n)) return n;
   }
+
   return parseNumberFromTextPT(raw);
 }
 
 // ======================================================================
 // Descrição específica
 // ======================================================================
+
 const STOPWORDS = new Set([
   "por","reais","real","com","de","da","do","das","dos","no","na","nos","nas",
   "um","uma","uns","umas","e","a","o","as","os","para","pra","pro","em"
@@ -330,6 +349,7 @@ function toTitleCase(str) {
 
 function extractSpecificFromMessage(msg) {
   const raw = norm(msg);
+
   const after = raw.match(/\b(?:de|do|da)\s+([a-z0-9-]+)(?:\s+([a-z0-9-]+))?(?:\s+([a-z0-9-]+))?/i);
   if (after) {
     const picked = [after[1], after[2], after[3]]
@@ -339,26 +359,32 @@ function extractSpecificFromMessage(msg) {
       .join(" ");
     if (picked) return toTitleCase(picked);
   }
+
   let text = raw.replace(VERBS_RE, " ");
   text = text.replace(/(?:r\$\s*)?-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})/gi, " ");
   text = text.replace(/(?:r\$\s*)?-?\d+(?:[.,]\d{1,2})?/gi, " ");
+
   Object.keys(NUMBER_WORDS).forEach((w) => {
     const ww = norm(w);
     text = text.replace(new RegExp(`\\b${ww}\\b`, "g"), " ");
   });
+
   text = text.replace(/[^\p{L}\p{N}\s-]/gu, " ");
+
   const tokens = text
     .split(/\s+/)
     .map((t) => t.trim())
     .filter(Boolean)
     .filter((t) => !STOPWORDS.has(t))
     .filter((t) => t.length >= 2);
+
   const base = tokens.slice(0, 4).join(" ");
   return base ? toTitleCase(base) : "";
 }
 
 function inferDescription(msg, categoryName, type) {
   const base = extractSpecificFromMessage(msg);
+
   if (base) {
     if (type === "income") {
       const subtype = String(categoryName || "").split("/")[1]?.trim() || "Extra";
@@ -367,23 +393,28 @@ function inferDescription(msg, categoryName, type) {
     }
     return base;
   }
+
   if (categoryName && !String(categoryName).includes("Outros")) {
     const parts = String(categoryName).split("/").map((p) => p.trim()).filter(Boolean);
     return parts.slice(1).join(" / ") || "Lançamento";
   }
+
   return "Lançamento";
 }
 
 // ======================================================================
 // Carteiras (contas)
 // ======================================================================
+
 function findWalletInText(text, wallets) {
   const t = norm(text);
   if (!wallets?.length) return null;
+
   let best = null;
   for (const w of wallets) {
     const wn = norm(w.name);
     if (!wn) continue;
+
     if (t === wn || t.includes(wn) || wn.includes(t)) {
       if (!best || wn.length > norm(best.name).length) best = w;
     }
@@ -394,11 +425,13 @@ function findWalletInText(text, wallets) {
 function parseWalletSelection(userText, wallets) {
   const t = String(userText || "").trim();
   if (!wallets?.length) return null;
+
   const num = t.match(/^\s*(\d{1,2})\s*$/);
   if (num) {
     const idx = Number(num[1]) - 1;
     if (idx >= 0 && idx < wallets.length) return wallets[idx];
   }
+
   return findWalletInText(t, wallets);
 }
 
@@ -411,6 +444,7 @@ function buildWalletQuestion(wallets) {
 // ======================================================================
 // Categorias (heurística + IA opcional)
 // ======================================================================
+
 const FALLBACK_CATEGORIES = {
   expense: [
     "Moradia / Aluguel",
@@ -433,6 +467,7 @@ const FALLBACK_CATEGORIES = {
 
 function findBestCategoryLocal(text, type) {
   const t = norm(text);
+
   if (type === "income") {
     if (/salario|pagamento/.test(t)) return "Receita / Salário";
     if (/freelancer|freela|job/.test(t)) return "Receita / Freelancer";
@@ -440,6 +475,7 @@ function findBestCategoryLocal(text, type) {
     if (/beneficio|benefícios|beneficios|vale/.test(t)) return "Receita / Benefícios";
     return "Receita / Extra";
   }
+
   if (/aluguel/.test(t)) return "Moradia / Aluguel";
   if (/iptu/.test(t)) return "Moradia / IPTU";
   if (/luz|energia/.test(t)) return "Contas Mensais / Energia";
@@ -452,12 +488,14 @@ function findBestCategoryLocal(text, type) {
   if (/delivery|ifood/.test(t)) return "Alimentação / Delivery";
   if (/restaurante|lanche|lanches|pizza|hamburguer|hambúrguer/.test(t))
     return "Alimentação / Restaurante / Lanches fora";
+
   return "Outros / Outros";
 }
 
 async function callOpenAI(prompt, signal) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY não configurada.");
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -468,6 +506,7 @@ async function callOpenAI(prompt, signal) {
     }),
     signal
   });
+
   if (!response.ok) throw new Error(`OpenAI API error (${response.status})`);
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content;
@@ -477,6 +516,7 @@ async function callOpenAI(prompt, signal) {
 
 async function classifyWithAI(text, type, allowed) {
   const categories = allowed?.length ? allowed : FALLBACK_CATEGORIES[type];
+
   const prompt = `
 Classifique a frase abaixo em UMA das categorias listadas.
 Responda SOMENTE com o texto EXATO da categoria.
@@ -493,21 +533,26 @@ ${categories.map((c) => "- " + c).join("\n")}
     const timeout = setTimeout(() => controller.abort(), 12000);
     const resultRaw = await callOpenAI(prompt, controller.signal);
     clearTimeout(timeout);
+
     const result = resultRaw.replace(/^[-–•]\s*/g, "").replace(/^"+|"+$/g, "").trim();
     if (categories.includes(result)) return result;
   } catch {
     // fallback
   }
+
   return type === "expense" ? "Outros / Outros" : "Receita / Extra";
 }
 
 function resolveCategoryIdByName(categoryName, categories, type) {
   if (!categoryName || !categories?.length) return null;
+
   const target = norm(categoryName);
+
   let found = categories.find(
     (c) => norm(c.name) === target && (!type || !c.type || norm(c.type) === norm(type))
   );
   if (found) return found.id;
+
   found = categories.find((c) => target.includes(norm(c.name)) || norm(c.name).includes(target));
   return found ? found.id : null;
 }
@@ -515,12 +560,15 @@ function resolveCategoryIdByName(categoryName, categories, type) {
 // ======================================================================
 // Confirmação (formato solicitado) — inclui conta
 // ======================================================================
+
 function buildConfirmationReply(data) {
   const isIncome = data.type === "income";
   const emoji = isIncome ? "🟢" : "🔴";
   const label = isIncome ? "Receita" : "Despesa";
   const date = formatDateBR(new Date());
+
   const walletLine = data.wallet_name ? `👛 Conta: ${data.wallet_name}\n` : "";
+
   return `${emoji} ${label}  |  Variável
 💰 Valor: R$ ${formatAmount2(data.amount)}
 📝 Descrição: ${data.description}
@@ -543,6 +591,7 @@ function isNo(text) {
 // ======================================================================
 // Monta transação + validações
 // ======================================================================
+
 function missingFields(tx) {
   const missing = [];
   if (!tx.amount || !Number.isFinite(Number(tx.amount)) || Number(tx.amount) === 0) missing.push("amount");
@@ -558,23 +607,30 @@ function mergeTx(base, patch) {
 async function buildTransactionFromMessage(message, wallets, categories) {
   const msg = String(message || "").trim();
   const t = norm(msg);
+
   const type = /(recebi|ganhei|salario|salário|venda|vendi|freelancer|freela|entrou)/i.test(t)
     ? "income"
     : "expense";
 
   const amount = parseAmount(msg);
+
   let categoryName = findBestCategoryLocal(msg, type);
+
   const allowedCategoryNames =
     categories?.length
       ? categories
           .filter((c) => !c.type || norm(c.type) === norm(type))
           .map((c) => c.name)
       : null;
+
   if (categoryName === "Outros / Outros" && process.env.OPENAI_API_KEY) {
     categoryName = await classifyWithAI(msg, type, allowedCategoryNames);
   }
+
   const categoryId = resolveCategoryIdByName(categoryName, categories, type);
+
   const wallet = findWalletInText(msg, wallets);
+
   const description = inferDescription(msg, categoryName, type);
 
   return {
@@ -593,6 +649,7 @@ async function buildTransactionFromMessage(message, wallets, categories) {
 // ======================================================================
 // Resposta (persistindo estado)
 // ======================================================================
+
 async function respond(res, key, { action, reply, tx }) {
   const isFinal = action === "confirmed" || action === "canceled";
 
@@ -615,9 +672,7 @@ async function respond(res, key, { action, reply, tx }) {
   });
 }
 
-// ======================================================================
-// Handler
-// ======================================================================
+
 // ======================================================================
 // Handler
 // ======================================================================
@@ -629,38 +684,11 @@ export default async function handler(req, res) {
   const text = getInboundText(body);
   const wallets = getWallets(body);
   const categories = getCategories(body);
+
   const stateKey = buildStateKey(body);
 
   try {
-    // ⭐ CORREÇÃO: Limpar estado quando Edge Function sinaliza reset
-    if (body.context?.reset_state === true) {
-      console.log('[RESET] Clearing state due to reset_state=true');
-      await clearState(stateKey);
-    }
-    
-    // ⭐ CORREÇÃO 2: Se pending_transaction é explicitamente null, limpar estado de confirmação
-    if (body.context?.pending_transaction === null) {
-      await clearState(stateKey);
-    }
-
     // 1) carrega estado persistido (se existir)
-    let pending = await loadState(stateKey);
-
-    // ============================================================
-    // A) Se existe pendência, continua o fluxo
-    // ============================================================
-    
-    // Se pending_transaction do contexto é null/undefined, também limpar
-    // (significa que o Edge Function já limpou o estado do seu lado)
-    if (contextPendingTx === null || contextPendingTx === undefined) {
-      const existingState = memoryState.get(stateKey);
-      if (existingState?.awaiting === 'confirmation') {
-        console.log('[RESET] Clearing stale confirmation state - context has no pending');
-        await clearState(stateKey);
-      }
-    }
-
-    // 1) carrega estado persistido (se existir e não foi limpo acima)
     let pending = await loadState(stateKey);
 
     // ============================================================
@@ -677,8 +705,10 @@ export default async function handler(req, res) {
             tx: pending
           });
         }
+
         const updated = mergeTx(pending, { wallet_id: chosen.id, wallet_name: chosen.name, awaiting: null });
         const miss = missingFields(updated);
+
         if (miss.includes("amount")) {
           updated.awaiting = "amount";
           return respond(res, stateKey, {
@@ -687,6 +717,7 @@ export default async function handler(req, res) {
             tx: updated
           });
         }
+
         updated.awaiting = "confirmation";
         return respond(res, stateKey, {
           action: "awaiting_confirmation",
@@ -705,8 +736,10 @@ export default async function handler(req, res) {
             tx: pending
           });
         }
+
         const updated = mergeTx(pending, { amount: Number(amount), awaiting: null });
         const miss = missingFields(updated);
+
         if (miss.includes("wallet")) {
           updated.awaiting = "wallet";
           return respond(res, stateKey, {
@@ -715,6 +748,7 @@ export default async function handler(req, res) {
             tx: updated
           });
         }
+
         updated.awaiting = "confirmation";
         return respond(res, stateKey, {
           action: "awaiting_confirmation",
@@ -733,6 +767,7 @@ export default async function handler(req, res) {
             tx: finalTx
           });
         }
+
         if (isNo(text)) {
           const canceled = { ...pending, awaiting: null };
           return respond(res, stateKey, {
@@ -741,6 +776,7 @@ export default async function handler(req, res) {
             tx: canceled
           });
         }
+
         return respond(res, stateKey, {
           action: "awaiting_confirmation",
           reply: "Responda *Sim* para confirmar ou *Não* para cancelar.",
@@ -755,7 +791,7 @@ export default async function handler(req, res) {
     if (!text) {
       return respond(res, stateKey, {
         action: "need_more_info",
-        reply: "Envie uma mensagem com o lançamento. Ex: "Paguei 50 no mercado"",
+        reply: "Envie uma mensagem com o lançamento. Ex: “Paguei 50 no mercado”",
         tx: null
       });
     }
@@ -787,7 +823,6 @@ export default async function handler(req, res) {
       reply: buildConfirmationReply(pendingTx),
       tx: pendingTx
     });
-
   } catch (err) {
     console.error(err);
     return ok(res, {
