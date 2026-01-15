@@ -618,6 +618,10 @@ async function respond(res, key, { action, reply, tx }) {
 // ======================================================================
 // Handler
 // ======================================================================
+// ======================================================================
+// Handler
+// ======================================================================
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
@@ -628,17 +632,23 @@ export default async function handler(req, res) {
   const stateKey = buildStateKey(body);
 
   try {
-    // ============================================================
-    // ⭐ CORREÇÃO CRÍTICA: Respeitar reset_state do Edge Function
-    // ============================================================
-    const contextResetState = body.context?.reset_state === true;
-    const contextPendingTx = body.context?.pending_transaction;
-    
-    // Se o Edge Function sinaliza reset, limpar estado local ANTES de tudo
-    if (contextResetState) {
-      console.log('[RESET] Clearing state due to reset_state=true from Edge Function');
+    // ⭐ CORREÇÃO: Limpar estado quando Edge Function sinaliza reset
+    if (body.context?.reset_state === true) {
+      console.log('[RESET] Clearing state due to reset_state=true');
       await clearState(stateKey);
     }
+    
+    // ⭐ CORREÇÃO 2: Se pending_transaction é explicitamente null, limpar estado de confirmação
+    if (body.context?.pending_transaction === null) {
+      await clearState(stateKey);
+    }
+
+    // 1) carrega estado persistido (se existir)
+    let pending = await loadState(stateKey);
+
+    // ============================================================
+    // A) Se existe pendência, continua o fluxo
+    // ============================================================
     
     // Se pending_transaction do contexto é null/undefined, também limpar
     // (significa que o Edge Function já limpou o estado do seu lado)
