@@ -119,9 +119,9 @@ async function supabaseFetch(path, options = {}) {
 }
 
 async function loadState(key) {
-  // 1) memória
+  // 1) memória (SÓ se for realmente um estado pendente)
   const mem = memoryState.get(key);
-  if (mem) return mem;
+  if (mem && typeof mem === "object" && mem.awaiting) return mem;
 
   // 2) supabase
   if (!hasSupabase()) return null;
@@ -141,12 +141,18 @@ async function loadState(key) {
     const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : Date.now();
     if (Date.now() - updatedAt > 24 * 60 * 60 * 1000) return null;
 
-    memoryState.set(key, row.state);
-    return row.state;
+    // SÓ cacheia se for pendência
+    if (row.state && typeof row.state === "object" && row.state.awaiting) {
+      memoryState.set(key, row.state);
+      return row.state;
+    }
+
+    return null;
   } catch {
     return null;
   }
 }
+
 
 async function saveState(key, state) {
   memoryState.set(key, state);
