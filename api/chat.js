@@ -687,19 +687,6 @@ export default async function handler(req, res) {
 
   const stateKey = buildStateKey(body);
 
-  // ⭐ RESET: se o integrador (Lovable) disser que não há pendência, zera estado local
-const ctxPending = body?.context?.pending_transaction;
-
-// opcional: flag explícita (se você passar do Lovable)
-const resetFlag = body?.context?.reset_state === true;
-
-// Se vier resetFlag OU pending_transaction vier null/undefined,
-// limpamos estado antes de tentar loadState() (isso evita loop)
-if (resetFlag || ctxPending == null) {
-  await clearState(stateKey);
-}
-
-
   try {
     // 1) carrega estado persistido (se existir)
     let pending = await loadState(stateKey);
