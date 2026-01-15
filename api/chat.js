@@ -119,9 +119,9 @@ async function supabaseFetch(path, options = {}) {
 }
 
 async function loadState(key) {
-  // 1) memória (SÓ se for realmente um estado pendente)
+  // 1) memória
   const mem = memoryState.get(key);
-  if (mem && typeof mem === "object" && mem.awaiting) return mem;
+  if (mem) return mem;
 
   // 2) supabase
   if (!hasSupabase()) return null;
@@ -141,18 +141,12 @@ async function loadState(key) {
     const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : Date.now();
     if (Date.now() - updatedAt > 24 * 60 * 60 * 1000) return null;
 
-    // SÓ cacheia se for pendência
-    if (row.state && typeof row.state === "object" && row.state.awaiting) {
-      memoryState.set(key, row.state);
-      return row.state;
-    }
-
-    return null;
+    memoryState.set(key, row.state);
+    return row.state;
   } catch {
     return null;
   }
 }
-
 
 async function saveState(key, state) {
   memoryState.set(key, state);
@@ -678,7 +672,6 @@ async function respond(res, key, { action, reply, tx }) {
   });
 }
 
-
 // ======================================================================
 // Handler
 // ======================================================================
@@ -687,14 +680,34 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   const body = req.body || {};
+  const stateKey = buildStateKey(body);
+
+  // ============================================================
+  // ⭐ CORREÇÃO 1: reset_state vindo do integrador (Lovable)
+  // ============================================================
+  if (body?.context?.reset_state === true) {
+    console.log("[RESET] Clearing state due to reset_state flag");
+    await clearState(stateKey);
+  }
+
+  // ============================================================
+  // ⭐ CORREÇÃO 2: se integrador diz que não há pendência, limpa estado
+  // (evita loop de confirmação reaparecendo)
+  // ============================================================
+  if (body?.context?.pending_transaction === null || body?.context?.pending_transaction === undefined) {
+    const mem = memoryState.get(stateKey);
+    if (mem?.awaiting) {
+      console.log("[RESET] Clearing stale in-memory state (no pending_transaction in context)");
+      await clearState(stateKey);
+    }
+  }
+
   const text = getInboundText(body);
   const wallets = getWallets(body);
   const categories = getCategories(body);
 
-  const stateKey = buildStateKey(body);
-
   try {
-    // 1) carrega estado persistido (se existir)
+    // Agora sim carrega estado (já limpo se necessário)
     let pending = await loadState(stateKey);
 
     // ============================================================
