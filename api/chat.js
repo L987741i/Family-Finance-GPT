@@ -108,11 +108,16 @@ function addDaysISO(isoYYYYMMDD, deltaDays) {
 
 function isoToBR(isoYYYYMMDD) {
   if (!isoYYYYMMDD) return formatDateBR(new Date());
+
   const [y, m, d] = String(isoYYYYMMDD).split("-").map(Number);
   if (!y || !m || !d) return formatDateBR(new Date());
-  const utc = new Date(Date.UTC(y, m - 1, d));
-  return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ }).format(utc);
+
+  // ✅ Usa 12:00 UTC para não "virar" o dia em fusos negativos como SP
+  const safe = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ }).format(safe);
 }
+
 
 const MONTHS_PT = {
   janeiro: 1,
