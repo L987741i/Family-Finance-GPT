@@ -46,6 +46,14 @@ function norm(s = "") {
   return removeDiacritics(String(s).toLowerCase().trim());
 }
 
+// ✅ Normalização específica para respostas curtas (Sim/Não etc.) — remove pontuação
+function normAnswer(s = "") {
+  return removeDiacritics(String(s).toLowerCase())
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function pick(obj, paths, fallback = undefined) {
   for (const p of paths) {
     const parts = p.split(".");
@@ -97,6 +105,15 @@ function buildStateKey(body) {
   return `${family}:${phone}`;
 }
 
+// ✅ Id da mensagem (para idempotência / evitar duplicados)
+function getMessageId(body) {
+  return (
+    pick(body, ["messageId", "message_id", "id"], "") ||
+    pick(body, ["message.id"], "") ||
+    pick(body, ["entry.0.changes.0.value.messages.0.id"], "")
+  );
+}
+
 // ======================================================================
 // Supabase REST (sem SDK)
 // ======================================================================
@@ -137,6 +154,9 @@ async function loadState(key) {
     const row = rows?.[0];
     if (!row?.state) return null;
 
+    // ✅ se foi "limpo" via soft clear
+    if (row.state?.cleared) return null;
+
     // TTL simples (24h)
     const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : Date.now();
     if (Date.now() - updatedAt > 24 * 60 * 60 * 1000) return null;
@@ -170,15 +190,23 @@ async function saveState(key, state) {
   }
 }
 
+// ✅ IMPORTANTE: Soft clear (upsert) ao invés de DELETE para evitar "estado fantasma"
 async function clearState(key) {
   memoryState.delete(key);
 
   if (!hasSupabase()) return;
 
   try {
-    await supabaseFetch(`/rest/v1/ff_conversation_state?key=eq.${encodeURIComponent(key)}`, {
-      method: "DELETE",
-      headers: { Prefer: "return=minimal" }
+    const payload = {
+      key,
+      state: { awaiting: null, cleared: true },
+      updated_at: new Date().toISOString()
+    };
+
+    await supabaseFetch(`/rest/v1/ff_conversation_state`, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(payload)
     });
   } catch {
     // silêncio
@@ -579,13 +607,32 @@ Confirma o lançamento? (Sim/Não)`;
 }
 
 function isYes(text) {
-  const t = norm(text);
-  return t === "sim" || t === "s" || t === "ss" || t.includes("confirm") || t.includes("pode");
+  const t = normAnswer(text);
+  return (
+    t === "sim" ||
+    t === "s" ||
+    t === "ss" ||
+    t === "ok" ||
+    t === "confirmo" ||
+    t === "confirmar" ||
+    t === "confirmado" ||
+    t === "pode" ||
+    t === "pode sim" ||
+    /\bconfirm\w*\b/.test(t)
+  );
 }
 
 function isNo(text) {
-  const t = norm(text);
-  return t === "nao" || t === "não" || t === "n" || t.includes("cancela") || t.includes("não quero");
+  const t = normAnswer(text);
+  return (
+    t === "nao" ||
+    t === "n" ||
+    t === "cancelar" ||
+    t === "cancela" ||
+    t === "cancelado" ||
+    t === "nao quero" ||
+    /\bcancel\w*\b/.test(t)
+  );
 }
 
 // ======================================================================
@@ -652,31 +699,29 @@ async function buildTransactionFromMessage(message, wallets, categories) {
 
 async function respond(res, key, { action, reply, tx }) {
   const isFinal = action === "confirmed" || action === "canceled";
+
+  // Estado que o integrador deve considerar como "pendente"
   const pending_transaction = !isFinal && tx ? tx : null;
 
-  // SEMPRE limpar memória primeiro
-  memoryState.delete(key);
+  // ✅ também devolve a transação final quando confirmar/cancelar
+  const final_transaction = isFinal && tx ? tx : null;
 
+  // Só salva estado quando realmente está aguardando algo
   if (pending_transaction && pending_transaction.awaiting) {
     await saveState(key, pending_transaction);
   } else {
-    // Aguardar a limpeza do Supabase ANTES de responder
     await clearState(key);
   }
-
-  return ok(res, { action, reply, ... });
-}
-
 
   return ok(res, {
     action,
     reply,
-    data: { pending_transaction },
+    data: { pending_transaction, final_transaction },
     pending_transaction,
+    final_transaction,
     conversation_state: pending_transaction ? { pending_transaction } : null
   });
 }
-
 
 // ======================================================================
 // Handler
@@ -691,10 +736,18 @@ export default async function handler(req, res) {
   const categories = getCategories(body);
 
   const stateKey = buildStateKey(body);
+  const messageId = String(getMessageId(body) || "");
 
   try {
     // 1) carrega estado persistido (se existir)
     let pending = await loadState(stateKey);
+
+    // ✅ idempotência: ignora mensagem duplicada
+    if (pending && typeof pending === "object" && pending.last_message_id && messageId) {
+      if (String(pending.last_message_id) === messageId) {
+        return ok(res, { action: "duplicate", reply: "", ignored: true });
+      }
+    }
 
     // ============================================================
     // A) Se existe pendência, continua o fluxo
@@ -704,14 +757,21 @@ export default async function handler(req, res) {
       if (pending.awaiting === "wallet") {
         const chosen = parseWalletSelection(text, wallets);
         if (!chosen) {
+          const tx = { ...pending, last_message_id: messageId || pending.last_message_id || null };
           return respond(res, stateKey, {
             action: "need_wallet",
             reply: `Não entendi a conta 😕\n\n${buildWalletQuestion(wallets)}`,
-            tx: pending
+            tx
           });
         }
 
-        const updated = mergeTx(pending, { wallet_id: chosen.id, wallet_name: chosen.name, awaiting: null });
+        const updated = mergeTx(pending, {
+          wallet_id: chosen.id,
+          wallet_name: chosen.name,
+          awaiting: null,
+          last_message_id: messageId || pending.last_message_id || null
+        });
+
         const miss = missingFields(updated);
 
         if (miss.includes("amount")) {
@@ -735,14 +795,20 @@ export default async function handler(req, res) {
       if (pending.awaiting === "amount") {
         const amount = parseAmount(text);
         if (!Number.isFinite(amount) || amount === null || amount === 0) {
+          const tx = { ...pending, last_message_id: messageId || pending.last_message_id || null };
           return respond(res, stateKey, {
             action: "need_amount",
             reply: "Não entendi o valor. Pode enviar só o número? Ex: 40 ou 40,00",
-            tx: pending
+            tx
           });
         }
 
-        const updated = mergeTx(pending, { amount: Number(amount), awaiting: null });
+        const updated = mergeTx(pending, {
+          amount: Number(amount),
+          awaiting: null,
+          last_message_id: messageId || pending.last_message_id || null
+        });
+
         const miss = missingFields(updated);
 
         if (miss.includes("wallet")) {
@@ -765,7 +831,7 @@ export default async function handler(req, res) {
       // aguardando CONFIRMAÇÃO
       if (pending.awaiting === "confirmation") {
         if (isYes(text)) {
-          const finalTx = { ...pending, awaiting: null };
+          const finalTx = { ...pending, awaiting: null, last_message_id: messageId || pending.last_message_id || null };
           return respond(res, stateKey, {
             action: "confirmed",
             reply: "Perfeito ✅ Lançamento confirmado.",
@@ -774,7 +840,7 @@ export default async function handler(req, res) {
         }
 
         if (isNo(text)) {
-          const canceled = { ...pending, awaiting: null };
+          const canceled = { ...pending, awaiting: null, last_message_id: messageId || pending.last_message_id || null };
           return respond(res, stateKey, {
             action: "canceled",
             reply: "Certo ✅ Lançamento cancelado.",
@@ -782,10 +848,48 @@ export default async function handler(req, res) {
           });
         }
 
+        // ✅ Se não respondeu Sim/Não e parece um NOVO lançamento, reinicia sem prender no anterior
+        const looksLikeNewTx =
+          Number.isFinite(parseAmount(text)) ||
+          /\b(paguei|gastei|comprei|recebi|ganhei|entrou)\b/i.test(String(text || ""));
+
+        if (looksLikeNewTx) {
+          await clearState(stateKey);
+          // segue como mensagem nova (mesma lógica do bloco B)
+          const tx = await buildTransactionFromMessage(text, wallets, categories);
+          const miss = missingFields(tx);
+
+          if (miss.includes("amount")) {
+            const pendingTx = { ...tx, awaiting: "amount", last_message_id: messageId || null };
+            return respond(res, stateKey, {
+              action: "need_amount",
+              reply: `Qual o valor de *${pendingTx.description}*? 💰`,
+              tx: pendingTx
+            });
+          }
+
+          if (miss.includes("wallet")) {
+            const pendingTx = { ...tx, awaiting: "wallet", last_message_id: messageId || null };
+            return respond(res, stateKey, {
+              action: "need_wallet",
+              reply: buildWalletQuestion(wallets),
+              tx: pendingTx
+            });
+          }
+
+          const pendingTx = { ...tx, awaiting: "confirmation", last_message_id: messageId || null };
+          return respond(res, stateKey, {
+            action: "awaiting_confirmation",
+            reply: buildConfirmationReply(pendingTx),
+            tx: pendingTx
+          });
+        }
+
+        const tx = { ...pending, last_message_id: messageId || pending.last_message_id || null };
         return respond(res, stateKey, {
           action: "awaiting_confirmation",
           reply: "Responda *Sim* para confirmar ou *Não* para cancelar.",
-          tx: pending
+          tx
         });
       }
     }
@@ -802,6 +906,8 @@ export default async function handler(req, res) {
     }
 
     const tx = await buildTransactionFromMessage(text, wallets, categories);
+    tx.last_message_id = messageId || null;
+
     const miss = missingFields(tx);
 
     if (miss.includes("amount")) {
