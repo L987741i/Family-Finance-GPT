@@ -652,16 +652,21 @@ async function buildTransactionFromMessage(message, wallets, categories) {
 
 async function respond(res, key, { action, reply, tx }) {
   const isFinal = action === "confirmed" || action === "canceled";
-
-  // Estado que o integrador deve considerar como "pendente"
   const pending_transaction = !isFinal && tx ? tx : null;
 
-  // Só salva estado quando realmente está aguardando algo
+  // SEMPRE limpar memória primeiro
+  memoryState.delete(key);
+
   if (pending_transaction && pending_transaction.awaiting) {
     await saveState(key, pending_transaction);
   } else {
+    // Aguardar a limpeza do Supabase ANTES de responder
     await clearState(key);
   }
+
+  return ok(res, { action, reply, ... });
+}
+
 
   return ok(res, {
     action,
