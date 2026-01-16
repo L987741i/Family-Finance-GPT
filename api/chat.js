@@ -82,6 +82,102 @@ function formatAmount2(amount) {
 }
 
 // ======================================================================
+// ✅ Datas (para permitir "ontem/anteontem/12 de janeiro" na confirmação)
+// ======================================================================
+
+function tzTodayISO() {
+  // YYYY-MM-DD no fuso TZ
+  const s = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+  return s; // ex: 2026-01-16
+}
+
+function addDaysISO(isoYYYYMMDD, deltaDays) {
+  const [y, m, d] = String(isoYYYYMMDD).split("-").map(Number);
+  const utc = Date.UTC(y, m - 1, d);
+  const next = new Date(utc + deltaDays * 24 * 60 * 60 * 1000);
+  const yy = next.getUTCFullYear();
+  const mm = String(next.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(next.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function isoToBR(isoYYYYMMDD) {
+  if (!isoYYYYMMDD) return formatDateBR(new Date());
+  const [y, m, d] = String(isoYYYYMMDD).split("-").map(Number);
+  if (!y || !m || !d) return formatDateBR(new Date());
+  const utc = new Date(Date.UTC(y, m - 1, d));
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ }).format(utc);
+}
+
+const MONTHS_PT = {
+  janeiro: 1,
+  fevereiro: 2,
+  marco: 3,
+  março: 3,
+  abril: 4,
+  maio: 5,
+  junho: 6,
+  julho: 7,
+  agosto: 8,
+  setembro: 9,
+  outubro: 10,
+  novembro: 11,
+  dezembro: 12
+};
+
+function parseDateFromTextPT(text) {
+  const t = normAnswer(text);
+
+  const today = tzTodayISO();
+  if (/\bhoje\b/.test(t)) return today;
+  if (/\banteontem\b/.test(t)) return addDaysISO(today, -2);
+  if (/\bontem\b/.test(t)) return addDaysISO(today, -1);
+
+  // dd/mm ou dd/mm/aaaa
+  const m1 = t.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/);
+  if (m1) {
+    const dd = Number(m1[1]);
+    const mm = Number(m1[2]);
+    let yy = m1[3] ? Number(m1[3]) : Number(today.slice(0, 4));
+    if (yy < 100) yy += 2000;
+    if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
+      return `${yy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+    }
+  }
+
+  // "12 de janeiro" (ano atual se não vier)
+  const m2 = t.match(/\b(\d{1,2})\s+de\s+([a-zçãõ]+)(?:\s+de\s+(\d{2,4}))?\b/);
+  if (m2) {
+    const dd = Number(m2[1]);
+    const monthName = m2[2];
+    const mm = MONTHS_PT[monthName];
+    let yy = m2[3] ? Number(m2[3]) : Number(today.slice(0, 4));
+    if (yy < 100) yy += 2000;
+    if (dd >= 1 && dd <= 31 && mm) {
+      return `${yy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+    }
+  }
+
+  return null;
+}
+
+function parseFrequency(text) {
+  const t = normAnswer(text);
+  if (t === "fixa" || /\bfixa\b/.test(t)) return "fixed";
+  if (t === "variavel" || /\bvariavel\b/.test(t)) return "variable";
+  return null;
+}
+
+function frequencyLabel(freq) {
+  return freq === "fixed" ? "Fixa" : "Variável";
+}
+
+// ======================================================================
 // Identificadores do usuário (para chave do estado)
 // ======================================================================
 
@@ -586,22 +682,22 @@ function resolveCategoryIdByName(categoryName, categories, type) {
 }
 
 // ======================================================================
-// Confirmação (formato solicitado) — inclui conta
+// Confirmação (formato solicitado) — inclui conta + data + frequência
 // ======================================================================
 
 function buildConfirmationReply(data) {
   const isIncome = data.type === "income";
   const emoji = isIncome ? "🟢" : "🔴";
   const label = isIncome ? "Receita" : "Despesa";
-  const date = formatDateBR(new Date());
 
   const walletLine = data.wallet_name ? `👛 Conta: ${data.wallet_name}\n` : "";
+  const dateLine = isoToBR(data.date_iso || tzTodayISO());
 
-  return `${emoji} ${label}  |  Variável
+  return `${emoji} ${label}  |  ${frequencyLabel(data.frequency)}
 💰 Valor: R$ ${formatAmount2(data.amount)}
 📝 Descrição: ${data.description}
 📁 Categoria: ${data.category_name}
-${walletLine}${date}
+${walletLine}${dateLine}
 
 Confirma o lançamento? (Sim/Não)`;
 }
@@ -633,6 +729,81 @@ function isNo(text) {
     t === "nao quero" ||
     /\bcancel\w*\b/.test(t)
   );
+}
+
+// ======================================================================
+// ✅ Edição durante confirmação
+// ======================================================================
+
+function applyEditsInConfirmation(text, pending, wallets, categories) {
+  const raw = String(text || "").trim();
+  const t = normAnswer(raw);
+
+  const updated = { ...pending };
+  let changed = false;
+
+  // frequência: "Fixa" / "Variável"
+  const freq = parseFrequency(raw);
+  if (freq) {
+    updated.frequency = freq;
+    changed = true;
+  }
+
+  // valor: "Valor: 32,32" ou só "32,32"
+  if (/^valor\b/.test(t) || /^[\d.,]+$/.test(t)) {
+    const amount = parseAmount(raw);
+    if (Number.isFinite(amount) && Number(amount) !== 0) {
+      updated.amount = Number(amount);
+      changed = true;
+    }
+  }
+
+  // data: "Data ontem" / "ontem" / "12/01" / "12 de janeiro"
+  if (
+    /^data\b/.test(t) ||
+    /\bontem\b|\banteontem\b|\bhoje\b/.test(t) ||
+    /\b\d{1,2}[\/\-]\d{1,2}\b/.test(t) ||
+    /\bde\s+[a-zçãõ]+\b/.test(t)
+  ) {
+    const iso = parseDateFromTextPT(raw.replace(/^data\s*[:\-]?\s*/i, ""));
+    if (iso) {
+      updated.date_iso = iso;
+      changed = true;
+    }
+  }
+
+  // descrição: "Descrição Pão para Empresa"
+  if (/^descricao\b/.test(t) || /^descrição\b/.test(t)) {
+    const newDesc = raw.replace(/^descri[cç][aã]o\s*[:\-]?\s*/i, "").trim();
+    if (newDesc) {
+      // ✅ "adiciona" na descrição (append). Para substituir, use: updated.description = newDesc;
+      updated.description = updated.description ? `${updated.description} / ${newDesc}` : newDesc;
+      changed = true;
+    }
+  }
+
+  // conta: "Conta Nubank"
+  if (/^conta\b/.test(t)) {
+    const nameOrNumber = raw.replace(/^conta\s*[:\-]?\s*/i, "").trim();
+    const chosen = parseWalletSelection(nameOrNumber, wallets);
+    if (chosen) {
+      updated.wallet_id = chosen.id;
+      updated.wallet_name = chosen.name;
+      changed = true;
+    }
+  }
+
+  // categoria: "Categoria Padaria"
+  if (/^categoria\b/.test(t)) {
+    const catName = raw.replace(/^categoria\s*[:\-]?\s*/i, "").trim();
+    if (catName) {
+      updated.category_name = catName;
+      updated.category_id = resolveCategoryIdByName(catName, categories, updated.type);
+      changed = true;
+    }
+  }
+
+  return { changed, updated };
 }
 
 // ======================================================================
@@ -689,6 +860,7 @@ async function buildTransactionFromMessage(message, wallets, categories) {
     wallet_id: wallet?.id || null,
     wallet_name: wallet?.name || null,
     frequency: "variable",
+    date_iso: tzTodayISO(),
     awaiting: null
   };
 }
@@ -848,6 +1020,21 @@ export default async function handler(req, res) {
           });
         }
 
+        // ✅ permitir edição durante confirmação
+        {
+          const { changed, updated } = applyEditsInConfirmation(text, pending, wallets, categories);
+          if (changed) {
+            updated.awaiting = "confirmation";
+            updated.last_message_id = messageId || pending.last_message_id || null;
+
+            return respond(res, stateKey, {
+              action: "awaiting_confirmation",
+              reply: buildConfirmationReply(updated),
+              tx: updated
+            });
+          }
+        }
+
         // ✅ Se não respondeu Sim/Não e parece um NOVO lançamento, reinicia sem prender no anterior
         const looksLikeNewTx =
           Number.isFinite(parseAmount(text)) ||
@@ -888,7 +1075,7 @@ export default async function handler(req, res) {
         const tx = { ...pending, last_message_id: messageId || pending.last_message_id || null };
         return respond(res, stateKey, {
           action: "awaiting_confirmation",
-          reply: "Responda *Sim* para confirmar ou *Não* para cancelar.",
+          reply: "Responda *Sim* para confirmar ou *Não* para cancelar.\n\nVocê também pode editar: Valor, Descrição, Categoria, Conta, Data, Fixa/Variável.",
           tx
         });
       }
