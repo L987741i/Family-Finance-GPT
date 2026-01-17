@@ -118,7 +118,6 @@ function isoToBR(isoYYYYMMDD) {
   return new Intl.DateTimeFormat("pt-BR", { timeZone: TZ }).format(safe);
 }
 
-
 const MONTHS_PT = {
   janeiro: 1,
   fevereiro: 2,
@@ -315,7 +314,7 @@ async function clearState(key) {
 }
 
 // ======================================================================
-// Entrada: texto + wallets + categories
+// Entrada: texto + wallets + categories + (novos: bills/receivables/goals)
 // ======================================================================
 
 function getInboundText(body) {
@@ -359,6 +358,22 @@ function getCategories(body) {
         })
         .filter(Boolean)
     : [];
+}
+
+// ✅ NOVOS CONTEXTOS (se o Lovable enviar)
+function getBills(body) {
+  const raw = pick(body, ["context.bills", "bills", "data.bills"], []) || [];
+  return Array.isArray(raw) ? raw : [];
+}
+
+function getReceivables(body) {
+  const raw = pick(body, ["context.receivables", "receivables", "data.receivables"], []) || [];
+  return Array.isArray(raw) ? raw : [];
+}
+
+function getGoals(body) {
+  const raw = pick(body, ["context.goals", "goals", "data.goals"], []) || [];
+  return Array.isArray(raw) ? raw : [];
 }
 
 // ======================================================================
@@ -707,6 +722,75 @@ ${walletLine}${dateLine}
 Confirma o lançamento? (Sim/Não)`;
 }
 
+// ======================================================================
+// ✅ NOVAS CONFIRMAÇÕES (Bills/Receivables/Goals/Accounts)
+// ======================================================================
+
+function buildOpConfirmationReply(op) {
+  const action = op?.op_action;
+
+  if (action === "add_account") {
+    return `👛 *Criar conta*
+🏦 Nome: ${op.name || "Conta"}
+💰 Saldo inicial: R$ ${formatAmount2(op.initial_balance || 0)}
+
+Confirma? (Sim/Não)`;
+  }
+
+  if (action === "add_bill") {
+    return `🧾 *Adicionar conta a pagar*
+📝 Título: ${op.title || "Conta"}
+💰 Valor: R$ ${formatAmount2(op.amount)}
+📅 Vencimento: ${isoToBR(op.due_date)}
+${op.account_name ? `👛 Conta: ${op.account_name}\n` : ""}Confirma? (Sim/Não)`;
+  }
+
+  if (action === "pay_bill") {
+    return `✅ *Pagar conta*
+📝 Conta: ${op.title || "Conta"}
+💰 Pagamento: R$ ${formatAmount2(op.paid_amount)}
+${op.interest_amount ? `➕ Juros: R$ ${formatAmount2(op.interest_amount)}\n` : ""}Confirma? (Sim/Não)`;
+  }
+
+  if (action === "add_receivable") {
+    return `📥 *Adicionar a receber*
+📝 Título: ${op.title || "A receber"}
+💰 Valor: R$ ${formatAmount2(op.amount)}
+📅 Vencimento: ${isoToBR(op.due_date)}
+${op.account_name ? `👛 Conta: ${op.account_name}\n` : ""}Confirma? (Sim/Não)`;
+  }
+
+  if (action === "receive_payment") {
+    return `✅ *Receber pagamento*
+📝 A receber: ${op.title || "Recebível"}
+💰 Recebido: R$ ${formatAmount2(op.received_amount)}
+Confirma? (Sim/Não)`;
+  }
+
+  if (action === "add_goal") {
+    return `🎯 *Criar meta*
+📝 Nome: ${op.name || "Meta"}
+🎯 Objetivo: R$ ${formatAmount2(op.target_amount)}
+Confirma? (Sim/Não)`;
+  }
+
+  if (action === "deposit_goal") {
+    return `💾 *Depositar na meta*
+🎯 Meta: ${op.goal_name || "Meta"}
+💰 Valor: R$ ${formatAmount2(op.amount)}
+${op.account_name ? `👛 Conta: ${op.account_name}\n` : ""}Confirma? (Sim/Não)`;
+  }
+
+  if (action === "withdraw_goal") {
+    return `🏧 *Retirar da meta*
+🎯 Meta: ${op.goal_name || "Meta"}
+💰 Valor: R$ ${formatAmount2(op.amount)}
+${op.account_name ? `👛 Conta: ${op.account_name}\n` : ""}Confirma? (Sim/Não)`;
+  }
+
+  return "Confirma? (Sim/Não)";
+}
+
 function isYes(text) {
   const t = normAnswer(text);
   return (
@@ -812,6 +896,65 @@ function applyEditsInConfirmation(text, pending, wallets, categories) {
 }
 
 // ======================================================================
+// ✅ NOVO: Intenções (novas funcionalidades)
+// ======================================================================
+
+function detectIntent(text) {
+  const t = normAnswer(text);
+
+  // Contas
+  if (/\b(contas|minhas contas|listar contas|ver contas)\b/.test(t)) return "query_accounts";
+  if (/\b(criar conta|adicionar conta|nova conta)\b/.test(t)) return "add_account";
+
+  // Contas a pagar
+  if (/\b(contas a pagar|boletos|pendentes|contas pendentes)\b/.test(t)) return "query_bills";
+  if (/\b(pagar conta|pagar boleto|pagar a conta)\b/.test(t)) return "pay_bill";
+  if (/\b(tenho que pagar|adicionar conta a pagar|criar conta a pagar|boleto)\b/.test(t)) return "add_bill";
+
+  // A receber
+  if (/\b(a receber|recebiveis|recebíveis|pendencias a receber|minhas cobrancas|minhas cobranças)\b/.test(t)) return "query_receivables";
+  if (/\b(receber pagamento|dar baixa|baixar recebivel|baixar recebível|recebi do)\b/.test(t)) return "receive_payment";
+  if (/\b(vou receber|adicionar a receber|criar a receber)\b/.test(t)) return "add_receivable";
+
+  // Metas
+  if (/\b(minhas metas|metas|objetivos|como estao minhas metas|como estão minhas metas)\b/.test(t)) return "query_goals";
+  if (/\b(criar meta|adicionar meta|nova meta)\b/.test(t)) return "add_goal";
+  if (/\b(retirar da meta|sacar da meta|resgatar da meta)\b/.test(t)) return "withdraw_goal";
+  if (/\b(guardar na meta|depositar na meta|colocar na meta)\b/.test(t)) return "deposit_goal";
+
+  return "transaction";
+}
+
+function findItemByText(text, items, fields) {
+  const t = normAnswer(text);
+  if (!Array.isArray(items) || !items.length) return null;
+
+  let best = null;
+  let bestScore = 0;
+
+  for (const it of items) {
+    const hay = fields
+      .map((f) => normAnswer(String(it?.[f] ?? "")))
+      .filter(Boolean)
+      .join(" ");
+    if (!hay) continue;
+
+    // Score simples por inclusão
+    let score = 0;
+    if (t && hay.includes(t)) score += Math.min(10, t.length);
+    const parts = t.split(" ").filter(Boolean);
+    for (const p of parts) if (p.length >= 3 && hay.includes(p)) score += 2;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = it;
+    }
+  }
+
+  return bestScore > 0 ? best : null;
+}
+
+// ======================================================================
 // Monta transação + validações
 // ======================================================================
 
@@ -900,6 +1043,16 @@ async function respond(res, key, { action, reply, tx }) {
   });
 }
 
+// ✅ NOVO: responder uma action "final" (RPC no Lovable) sem manter pending_transaction
+async function respondAction(res, key, { action, reply, data }) {
+  await clearState(key);
+  return ok(res, {
+    action,
+    reply,
+    data: data || {}
+  });
+}
+
 // ======================================================================
 // Handler
 // ======================================================================
@@ -911,6 +1064,11 @@ export default async function handler(req, res) {
   const text = getInboundText(body);
   const wallets = getWallets(body);
   const categories = getCategories(body);
+
+  // ✅ novos contextos (se vierem do Lovable)
+  const bills = getBills(body);
+  const receivables = getReceivables(body);
+  const goals = getGoals(body);
 
   const stateKey = buildStateKey(body);
   const messageId = String(getMessageId(body) || "");
@@ -930,6 +1088,102 @@ export default async function handler(req, res) {
     // A) Se existe pendência, continua o fluxo
     // ============================================================
     if (pending && typeof pending === "object" && pending.awaiting) {
+      // ==========================================================
+      // ✅ NOVO: aguardando confirmação de OPERAÇÃO (add_bill/pay_bill/etc.)
+      // ==========================================================
+      if (pending.awaiting === "op_confirmation") {
+        if (isYes(text)) {
+          const op = pending.op || {};
+          const action = op.op_action;
+
+          // retorna a action final para o Lovable executar RPC
+          return respondAction(res, stateKey, {
+            action,
+            reply: "Perfeito ✅ Confirmado.",
+            data: op.payload || {}
+          });
+        }
+
+        if (isNo(text)) {
+          return respondAction(res, stateKey, {
+            action: "canceled",
+            reply: "Certo ✅ Cancelado.",
+            data: {}
+          });
+        }
+
+        // permitir edição simples do valor/data/conta antes de confirmar operações
+        const t = normAnswer(text);
+        const op = { ...(pending.op || {}) };
+        let changed = false;
+
+        // valor
+        if (/^valor\b/.test(t) || /^[\d.,]+$/.test(t)) {
+          const v = parseAmount(text);
+          if (Number.isFinite(v) && v !== 0) {
+            if (op.payload) op.payload.amount = op.payload.amount ?? v;
+            if (op.payload) op.payload.paid_amount = op.payload.paid_amount ?? v;
+            if (op.payload) op.payload.received_amount = op.payload.received_amount ?? v;
+            if (op.payload) op.payload.withdraw_amount = op.payload.withdraw_amount ?? v;
+            // Ajuste consistente por ação:
+            if (op.op_action === "pay_bill") op.payload.paid_amount = v;
+            if (op.op_action === "receive_payment") op.payload.received_amount = v;
+            if (op.op_action === "deposit_goal") op.payload.amount = v;
+            if (op.op_action === "withdraw_goal") op.payload.amount = v;
+            if (op.op_action === "add_bill") op.payload.amount = v;
+            if (op.op_action === "add_receivable") op.payload.amount = v;
+            if (op.op_action === "add_account") op.payload.initial_balance = v;
+            if (op.op_action === "add_goal") op.payload.target_amount = v;
+            changed = true;
+          }
+        }
+
+        // data (para bill/receivable)
+        if (/^data\b/.test(t) || /\bontem\b|\banteontem\b|\bhoje\b/.test(t) || /\bde\s+[a-zçãõ]+\b/.test(t)) {
+          const iso = parseDateFromTextPT(text.replace(/^data\s*[:\-]?\s*/i, ""));
+          if (iso) {
+            if (op.op_action === "add_bill") op.payload.due_date = iso;
+            if (op.op_action === "add_receivable") op.payload.due_date = iso;
+            changed = true;
+          }
+        }
+
+        // conta (para bill/receivable/deposit/withdraw)
+        if (/^conta\b/.test(t)) {
+          const nameOrNumber = text.replace(/^conta\s*[:\-]?\s*/i, "").trim();
+          const chosen = parseWalletSelection(nameOrNumber, wallets);
+          if (chosen) {
+            if (op.op_action === "add_bill") op.payload.account_id = chosen.id;
+            if (op.op_action === "add_receivable") op.payload.account_id = chosen.id;
+            if (op.op_action === "deposit_goal") op.payload.account_id = chosen.id;
+            if (op.op_action === "withdraw_goal") op.payload.account_id = chosen.id;
+            op.account_name = chosen.name;
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          const next = {
+            ...pending,
+            op,
+            last_message_id: messageId || pending.last_message_id || null
+          };
+          next.awaiting = "op_confirmation";
+          return respond(res, stateKey, {
+            action: "awaiting_confirmation",
+            reply: buildOpConfirmationReply({ op_action: op.op_action, ...op.payload, account_name: op.account_name, goal_name: op.goal_name, title: op.title }),
+            tx: next
+          });
+        }
+
+        const tx = { ...pending, last_message_id: messageId || pending.last_message_id || null };
+        return respond(res, stateKey, {
+          action: "awaiting_confirmation",
+          reply: "Responda *Sim* para confirmar ou *Não* para cancelar.\n\nVocê também pode editar: Valor, Conta, Data.",
+          tx
+        });
+      }
+
       // aguardando CONTA
       if (pending.awaiting === "wallet") {
         const chosen = parseWalletSelection(text, wallets);
@@ -1097,6 +1351,343 @@ export default async function handler(req, res) {
       });
     }
 
+    // ✅ NOVO: checar intenções antes de tratar como lançamento
+    const intent = detectIntent(text);
+
+    // ----------------------------
+    // Contas
+    // ----------------------------
+    if (intent === "query_accounts") {
+      return respondAction(res, stateKey, {
+        action: "query_accounts",
+        reply: "",
+        data: {}
+      });
+    }
+
+    if (intent === "add_account") {
+      // Ex: "adiciona uma conta nubank com 500"
+      const initial_balance = parseAmount(text) ?? 0;
+
+      // nome (remove palavras comuns)
+      const name = String(text)
+        .replace(/criar|adicionar|nova|conta|com|saldo|inicial|reais|real|r\$/gi, " ")
+        .replace(/[\d.,]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const payload = {
+        name: name || "Conta",
+        type: "conta_corrente",
+        initial_balance: Number(initial_balance) || 0
+      };
+
+      const tx = {
+        awaiting: "op_confirmation",
+        op: {
+          op_action: "add_account",
+          payload
+        },
+        last_message_id: messageId || null
+      };
+
+      await saveState(stateKey, tx);
+      return ok(res, {
+        action: "awaiting_confirmation",
+        reply: buildOpConfirmationReply({ op_action: "add_account", ...payload }),
+        data: { pending_transaction: tx },
+        pending_transaction: tx,
+        conversation_state: { pending_transaction: tx }
+      });
+    }
+
+    // ----------------------------
+    // Contas a pagar
+    // ----------------------------
+    if (intent === "query_bills") {
+      return respondAction(res, stateKey, { action: "query_bills", reply: "", data: {} });
+    }
+
+    if (intent === "add_bill") {
+      const amount = parseAmount(text);
+      if (!Number.isFinite(amount) || !amount) {
+        // pede valor
+        const tx = {
+          awaiting: "op_confirmation",
+          op: {
+            op_action: "add_bill",
+            payload: { title: text, amount: null, due_date: tzTodayISO(), category_id: null, account_id: null, is_recurring: /\bmensal\b|\btodo mes\b|\brecorrente\b/.test(normAnswer(text)) }
+          },
+          last_message_id: messageId || null
+        };
+        await saveState(stateKey, tx);
+        return ok(res, {
+          action: "need_amount",
+          reply: "Qual o valor dessa conta a pagar? 💰 (ex: 150 ou 150,00)",
+          data: { pending_transaction: tx },
+          pending_transaction: tx,
+          conversation_state: { pending_transaction: tx }
+        });
+      }
+
+      const due = parseDateFromTextPT(text) || tzTodayISO();
+      const wallet = findWalletInText(text, wallets);
+
+      const payload = {
+        title: text,
+        amount: Number(amount),
+        due_date: due,
+        category_id: null,
+        account_id: wallet?.id || null,
+        is_recurring: /\bmensal\b|\btodo mes\b|\brecorrente\b/.test(normAnswer(text))
+      };
+
+      const tx = {
+        awaiting: "op_confirmation",
+        op: {
+          op_action: "add_bill",
+          payload,
+          account_name: wallet?.name || null,
+          title: payload.title
+        },
+        last_message_id: messageId || null
+      };
+
+      await saveState(stateKey, tx);
+      return ok(res, {
+        action: "awaiting_confirmation",
+        reply: buildOpConfirmationReply({ op_action: "add_bill", ...payload, account_name: wallet?.name || null, title: payload.title }),
+        data: { pending_transaction: tx },
+        pending_transaction: tx,
+        conversation_state: { pending_transaction: tx }
+      });
+    }
+
+    if (intent === "pay_bill") {
+      // tenta achar pelo texto no contexto; se não achar, pede lista
+      const bill = findItemByText(text, bills, ["title", "name", "description"]);
+      if (!bill?.id) {
+        return respondAction(res, stateKey, { action: "query_bills", reply: "", data: {} });
+      }
+
+      const payload = {
+        bill_id: bill.id,
+        paid_amount: Number(bill.paid_amount || bill.amount || 0),
+        interest_amount: 0
+      };
+
+      const tx = {
+        awaiting: "op_confirmation",
+        op: {
+          op_action: "pay_bill",
+          payload,
+          title: bill.title || bill.name || "Conta"
+        },
+        last_message_id: messageId || null
+      };
+
+      await saveState(stateKey, tx);
+      return ok(res, {
+        action: "awaiting_confirmation",
+        reply: buildOpConfirmationReply({ op_action: "pay_bill", ...payload, title: tx.op.title }),
+        data: { pending_transaction: tx },
+        pending_transaction: tx,
+        conversation_state: { pending_transaction: tx }
+      });
+    }
+
+    // ----------------------------
+    // A receber
+    // ----------------------------
+    if (intent === "query_receivables") {
+      return respondAction(res, stateKey, { action: "query_receivables", reply: "", data: {} });
+    }
+
+    if (intent === "add_receivable") {
+      const amount = parseAmount(text);
+      if (!Number.isFinite(amount) || !amount) {
+        const tx = {
+          awaiting: "op_confirmation",
+          op: {
+            op_action: "add_receivable",
+            payload: { title: text, amount: null, due_date: tzTodayISO(), category_id: null, account_id: null, is_recurring: false }
+          },
+          last_message_id: messageId || null
+        };
+        await saveState(stateKey, tx);
+        return ok(res, {
+          action: "need_amount",
+          reply: "Qual o valor desse *a receber*? 💰 (ex: 1000 ou 1000,00)",
+          data: { pending_transaction: tx },
+          pending_transaction: tx,
+          conversation_state: { pending_transaction: tx }
+        });
+      }
+
+      const due = parseDateFromTextPT(text) || tzTodayISO();
+      const wallet = findWalletInText(text, wallets);
+
+      const payload = {
+        title: text,
+        amount: Number(amount),
+        due_date: due,
+        category_id: null,
+        account_id: wallet?.id || null,
+        is_recurring: false
+      };
+
+      const tx = {
+        awaiting: "op_confirmation",
+        op: {
+          op_action: "add_receivable",
+          payload,
+          account_name: wallet?.name || null,
+          title: payload.title
+        },
+        last_message_id: messageId || null
+      };
+
+      await saveState(stateKey, tx);
+      return ok(res, {
+        action: "awaiting_confirmation",
+        reply: buildOpConfirmationReply({ op_action: "add_receivable", ...payload, account_name: wallet?.name || null, title: payload.title }),
+        data: { pending_transaction: tx },
+        pending_transaction: tx,
+        conversation_state: { pending_transaction: tx }
+      });
+    }
+
+    if (intent === "receive_payment") {
+      const rec = findItemByText(text, receivables, ["title", "name", "description"]);
+      if (!rec?.id) {
+        return respondAction(res, stateKey, { action: "query_receivables", reply: "", data: {} });
+      }
+
+      const payload = {
+        receivable_id: rec.id,
+        received_amount: Number(rec.received_amount || rec.amount || 0)
+      };
+
+      const tx = {
+        awaiting: "op_confirmation",
+        op: {
+          op_action: "receive_payment",
+          payload,
+          title: rec.title || rec.name || "Recebível"
+        },
+        last_message_id: messageId || null
+      };
+
+      await saveState(stateKey, tx);
+      return ok(res, {
+        action: "awaiting_confirmation",
+        reply: buildOpConfirmationReply({ op_action: "receive_payment", ...payload, title: tx.op.title }),
+        data: { pending_transaction: tx },
+        pending_transaction: tx,
+        conversation_state: { pending_transaction: tx }
+      });
+    }
+
+    // ----------------------------
+    // Metas
+    // ----------------------------
+    if (intent === "query_goals") {
+      return respondAction(res, stateKey, { action: "query_goals", reply: "", data: {} });
+    }
+
+    if (intent === "add_goal") {
+      const target = parseAmount(text);
+      const name = String(text)
+        .replace(/criar|adicionar|nova|meta|objetivo|de|r\$/gi, " ")
+        .replace(/[\d.,]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const payload = {
+        name: name || "Meta",
+        target_amount: Number(target) || 0
+      };
+
+      const tx = {
+        awaiting: "op_confirmation",
+        op: { op_action: "add_goal", payload },
+        last_message_id: messageId || null
+      };
+
+      await saveState(stateKey, tx);
+      return ok(res, {
+        action: "awaiting_confirmation",
+        reply: buildOpConfirmationReply({ op_action: "add_goal", ...payload }),
+        data: { pending_transaction: tx },
+        pending_transaction: tx,
+        conversation_state: { pending_transaction: tx }
+      });
+    }
+
+    if (intent === "deposit_goal" || intent === "withdraw_goal") {
+      const goal = findItemByText(text, goals, ["name", "title"]);
+      if (!goal?.id) {
+        return respondAction(res, stateKey, { action: "query_goals", reply: "", data: {} });
+      }
+
+      const amount = parseAmount(text);
+      if (!Number.isFinite(amount) || !amount) {
+        // pede valor
+        const tx = {
+          awaiting: "op_confirmation",
+          op: {
+            op_action: intent === "deposit_goal" ? "deposit_goal" : "withdraw_goal",
+            payload: { goal_id: goal.id, account_id: null, amount: null }
+          },
+          last_message_id: messageId || null
+        };
+        await saveState(stateKey, tx);
+        return ok(res, {
+          action: "need_amount",
+          reply: `Qual o valor para ${intent === "deposit_goal" ? "depositar" : "retirar"} na meta *${goal.name || "Meta"}*? 💰`,
+          data: { pending_transaction: tx },
+          pending_transaction: tx,
+          conversation_state: { pending_transaction: tx }
+        });
+      }
+
+      const wallet = findWalletInText(text, wallets);
+
+      const payload = {
+        goal_id: goal.id,
+        account_id: wallet?.id || null,
+        amount: Number(amount)
+      };
+
+      const tx = {
+        awaiting: "op_confirmation",
+        op: {
+          op_action: intent === "deposit_goal" ? "deposit_goal" : "withdraw_goal",
+          payload,
+          goal_name: goal.name || goal.title || "Meta",
+          account_name: wallet?.name || null
+        },
+        last_message_id: messageId || null
+      };
+
+      await saveState(stateKey, tx);
+      return ok(res, {
+        action: "awaiting_confirmation",
+        reply: buildOpConfirmationReply({
+          op_action: tx.op.op_action,
+          ...payload,
+          goal_name: tx.op.goal_name,
+          account_name: tx.op.account_name
+        }),
+        data: { pending_transaction: tx },
+        pending_transaction: tx,
+        conversation_state: { pending_transaction: tx }
+      });
+    }
+
+    // ============================================================
+    // C) Padrão atual: Lançamento normal (Despesa/Receita)
+    // ============================================================
     const tx = await buildTransactionFromMessage(text, wallets, categories);
     tx.last_message_id = messageId || null;
 
